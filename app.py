@@ -84,8 +84,8 @@ if "current_session_id" not in st.session_state:
         st.session_state.current_session_id = c.lastrowid
 
 # --- TAMPILAN UTAMA ---
-st.title("🎓 KA Tutor Bahasa Korea")
-st.caption("Apa yang bisa saya bantu?")
+st.title("🎓 KA Tutor Bahasa Korea🇰🇷")
+st.caption("Apa yang bisa saya bantu?🧑‍🏫")
 
 # Ambil history dari DB
 c = conn.cursor()
