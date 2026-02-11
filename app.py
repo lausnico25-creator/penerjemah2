@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 
 # --- 1. KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Tutor Korea AI", page_icon="🇰🇷", layout="wide")
+st.set_page_config(page_title="Penerjemah Korea-Indo", page_icon="🇰🇷", layout="wide")
 
 # --- 2. DATABASE SETUP ---
 def init_db():
@@ -24,42 +24,40 @@ conn = init_db()
 
 # --- 3. KONFIGURASI API ---
 try:
-    # Pastikan "GEMINI_API_KEY" sudah ada di .streamlit/secrets.toml atau Secrets Streamlit Cloud
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception:
-    st.error("API Key belum disetting di Secrets! Pastikan GEMINI_API_KEY tersedia.")
+    st.error("API Key belum disetting di Secrets!")
     st.stop()
 
-# Menggunakan model terbaru (sesuai ketersediaan, default gemini-1.5-flash)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
 # --- 4. FUNGSI AUDIO ---
 def play_audio(text):
     try:
-        # Menghapus karakter non-Korea agar pelafalan gTTS lebih akurat
-        clean_text = re.sub(r'[^가-힣a-zA-Z0-9\s]', '', text)
-        tts = gTTS(text=clean_text, lang='ko')
+        # Hanya ambil karakter Korea untuk audio
+        korean_text = re.sub(r'[^가-힣\s]', '', text)
+        if not korean_text.strip(): return None
+        
+        tts = gTTS(text=korean_text, lang='ko')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except Exception:
+    except:
         return None
 
-# --- 5. SIDEBAR: RIWAYAT & MANAJEMEN SESI ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
-    st.title("🇰🇷 Riwayat Belajar")
-    
+    st.title("🇰🇷 Riwayat Terjemahan")
     if st.button("+ Chat Baru", use_container_width=True):
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
-        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
+        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Terjemahan Baru", now))
         conn.commit()
         st.session_state.current_session_id = c.lastrowid
         st.rerun()
 
     st.write("---")
-    
     c = conn.cursor()
     c.execute("SELECT id, title FROM sessions ORDER BY id DESC")
     sessions = c.fetchall()
@@ -78,58 +76,52 @@ with st.sidebar:
                 st.session_state.current_session_id = None
                 st.rerun()
 
-# --- 6. LOGIKA SESI AKTIF ---
+# --- 6. LOGIKA SESI ---
 if "current_session_id" not in st.session_state or st.session_state.current_session_id is None:
     if sessions:
         st.session_state.current_session_id = sessions[0][0]
     else:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
-        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
+        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Terjemahan Baru", now))
         conn.commit()
         st.session_state.current_session_id = c.lastrowid
 
 # --- 7. TAMPILAN UTAMA ---
-st.title("🎓 Guru Bahasa Korea AI")
+st.title("🇰🇷 Penerjemah Khusus Indonesia ↔ Korea")
+st.caption("Hanya melayani terjemahan dua bahasa tersebut.")
 
 c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
 current_messages = c.fetchall()
 
-# Menampilkan pesan chat
 for m_id, role, content in current_messages:
     with st.chat_message(role):
         st.markdown(content)
         
-        if role == "assistant":
-            # Mencari teks di dalam kurung siku [...]
+        if role == "assistant" and "Maaf" not in content:
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
-                st.write("🔈 **Kosa Kata:**")
+                st.write("---")
                 for i, v in enumerate(variants):
-                    # Memisahkan Kata Korea dan Artinya jika ada tanda ":"
                     if ":" in v:
-                        korea_word, meaning = v.split(":", 1)
-                        korea_word = korea_word.strip()
-                        meaning = meaning.strip()
+                        korea, indo = v.split(":", 1)
+                        korea, indo = korea.strip(), indo.strip()
                     else:
-                        korea_word = v.strip()
-                        meaning = ""
+                        korea, indo = v.strip(), ""
 
-                    # Tampilan Tombol Audio dan Penjelasan
-                    col_btn, col_txt = st.columns([1, 4])
-                    with col_btn:
-                        if st.button(f"🔊 {korea_word}", key=f"aud_{m_id}_{i}"):
-                            audio_fp = play_audio(korea_word)
-                            if audio_fp:
-                                st.audio(audio_fp, format="audio/mp3", autoplay=True)
-                    with col_txt:
-                        if meaning:
-                            st.info(f"Artinya: {meaning}")
+                    # Tampilan Tombol & Arti tepat di bawahnya
+                    btn_key = f"aud_{m_id}_{i}"
+                    if st.button(f"🔊 {korea}", key=btn_key):
+                        audio_fp = play_audio(korea)
+                        if audio_fp:
+                            st.audio(audio_fp, format="audio/mp3", autoplay=True)
+                    if indo:
+                        st.markdown(f"*{indo}*")
+                st.write("---")
 
-# --- 8. INPUT USER & RESPON AI ---
-if prompt := st.chat_input("Tanya guru (contoh: Apa bahasa Koreanya makan?)"):
-    # Simpan pesan user ke DB
+# --- 8. INPUT & VALIDASI KETAT ---
+if prompt := st.chat_input("Masukkan kata atau kalimat..."):
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
@@ -138,35 +130,32 @@ if prompt := st.chat_input("Tanya guru (contoh: Apa bahasa Koreanya makan?)"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang merinci..."):
+        with st.spinner("Menerjemahkan..."):
+            # PEMBATAS: Instruksi super ketat agar AI tidak menjawab di luar topik
+            instruction = (
+                "Kamu adalah ahli bahasa khusus Indonesia dan Korea. "
+                "TUGAS UTAMA: Hanya terjemahkan Indonesia ke Korea atau Korea ke Indonesia. "
+                "PEMBATAS: Jika user bertanya hal di luar bahasa Korea/Indonesia (misal: matematika, bahasa Inggris, masak, coding), "
+                "jawablah: 'Maaf, saya hanya khusus melayani terjemahan Indonesia-Korea.' "
+                "FORMAT WAJIB: Setiap kata/frasa Korea harus ditulis: [Kata Korea: Arti Indonesia]. "
+                "Berikan cara baca (romanisasi) di luar kurung siku agar membantu user."
+            )
+            
             try:
-                # Instruksi agar AI memberikan format [Korea: Arti]
-                instruction = (
-                    "Kamu adalah Guru Bahasa Korea yang ramah. "
-                    "WAJIB: Setiap kali menyebutkan kata Korea penting, tulis dalam kurung siku dengan format [Kata Korea: Arti]. "
-                    "Contoh: [먹다: Makan]. Berikan penjelasan dalam Bahasa Indonesia yang mudah dipahami."
-                )
-                
-                response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
+                response = model.generate_content(f"{instruction}\n\nUser: {prompt}")
                 answer = response.text
                 st.markdown(answer)
                 
-                # Update Judul Chat Otomatis jika masih default
+                # Update judul chat
                 c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
-                current_title = c.fetchone()
-                if current_title and current_title[0] == "Percakapan Baru":
-                    res_title = model.generate_content(f"Buatkan judul singkat (max 3 kata) untuk topik ini: {prompt}")
-                    clean_title = res_title.text.strip().replace('"', '')
-                    c.execute("UPDATE sessions SET title = ? WHERE id = ?", (clean_title, st.session_state.current_session_id))
+                if c.fetchone()[0] == "Terjemahan Baru":
+                    # Minta judul singkat (max 2 kata)
+                    res_title = model.generate_content(f"Berikan judul 2 kata untuk topik ini: {prompt}")
+                    c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text[:20].strip(), st.session_state.current_session_id))
                 
-                # Simpan pesan assistant ke DB
                 c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
                           (st.session_state.current_session_id, "assistant", answer))
                 conn.commit()
                 st.rerun()
-                
             except Exception as e:
-                if "ResourceExhausted" in str(e):
-                    st.warning("Kuota harian API habis. Silakan coba lagi nanti.")
-                else:
-                    st.error(f"Terjadi kesalahan: {e}")
+                st.error(f"Error: {e}")
