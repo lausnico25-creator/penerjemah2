@@ -31,10 +31,11 @@ except:
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# --- 4. FUNGSI AUDIO (PEMBERSIH TEKS) ---
+# --- 4. FUNGSI AUDIO (HANYA BACA HANGUL) ---
 def play_audio(text):
     try:
-        # Menghapus karakter latin/simbol agar gTTS hanya baca Hangul
+        # Menghapus karakter latin dan simbol agar gTTS fokus pada Hangul
+        # Angka yang sudah diubah jadi Hangul oleh AI akan terbaca dengan sempurna di sini
         korean_only = re.sub(r'[^가-힣\s]', '', text)
         if not korean_only.strip():
             return None
@@ -99,30 +100,28 @@ for m_id, role, content in current_messages:
         st.markdown(content)
         
         if role == "assistant" and "Maaf" not in content:
-            # Mencari format [Korea | Romaji | Indo]
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
                 for i, v in enumerate(variants):
-                    # PROTEKSI ERROR: Cek apakah ada tanda '|'
                     parts = v.split("|")
                     
-                    # Logika pengisian data yang aman (Index Safety)
-                    korea = parts[0].strip() if len(parts) > 0 else "Error"
+                    korea = parts[0].strip() if len(parts) > 0 else "..."
                     romaji = parts[1].strip() if len(parts) > 1 else ""
                     indo = parts[2].strip() if len(parts) > 2 else ""
 
-                    # Tombol Audio (Hanya baca variabel 'korea')
+                    # Tombol Audio (Korea: Romaji)
                     if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
                         audio_fp = play_audio(korea)
                         if audio_fp:
                             st.audio(audio_fp, format="audio/mp3", autoplay=True)
                     
-                    # Teks Bahasa Indonesia besar
+                    # Teks Indonesia (Ukuran Kecil & Normal)
                     if indo:
-                        st.markdown(f"## {indo}")
+                        st.write(indo) 
+                    
                     st.write("---")
 
-# --- 8. INPUT USER & PROMPT ---
+# --- 8. INPUT USER & PROMPT (DENGAN INSTRUKSI ANGKA) ---
 if prompt := st.chat_input("Masukkan kata atau kalimat..."):
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
@@ -132,12 +131,14 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Sedang merinci..."):
+        with st.spinner("Guru sedang merinci..."):
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. Jawab dengan ramah dan berikan penjelasan tata bahasa."
+                "Kamu adalah Guru Bahasa Korea. Jawab dengan ramah dan beri penjelasan."
                 "BATASAN: Hanya layani terjemahan Indonesia-Korea."
-                "WAJIB FORMAT: Untuk setiap kata/kalimat Korea, gunakan [Teks Korea | Romanisasi | Arti Indonesia]. "
-                "Contoh: [학교에 갑니다 | Hakgyoe gamnida | Pergi ke sekolah]."
+                "WAJIB FORMAT: [Teks Korea | Romanisasi | Arti Indonesia]."
+                "ATURAN ANGKA: Jika ada angka dalam kalimat, JANGAN tulis angka (1, 2, 3) di bagian Teks Korea. "
+                "Ganti angka tersebut dengan tulisan Hangul agar bisa dibaca oleh sistem suara. "
+                "Contoh: Jangan tulis [1시], tapi tulis [한 시 | Han-si | Jam 1]."
             )
             
             try:
@@ -145,7 +146,6 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
                 answer = response.text
                 st.markdown(answer)
                 
-                # Simpan pesan & update judul
                 c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
                           (st.session_state.current_session_id, "assistant", answer))
                 conn.commit()
