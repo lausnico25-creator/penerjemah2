@@ -26,27 +26,30 @@ conn = init_db()
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except:
-    st.error("API Key belum disetting di Secrets!")
+    st.error("API Key belum disetting!")
     st.stop()
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# --- 4. FUNGSI AUDIO ---
+# --- 4. FUNGSI AUDIO (DIPERBAIKI) ---
 def play_audio(text):
     try:
-        # Hanya ambil bagian Hangul untuk suara
-        korean_text = re.sub(r'[^가-힣\s]', '', text)
-        if not korean_text.strip(): return None
+        # PENTING: Menghapus semua karakter kecuali Hangul (Korea)
+        # Ini agar gTTS hanya membaca "학교에 갑니다" bukan "Hakgyoe gamnida"
+        korean_only = re.sub(r'[^가-힣\s]', '', text)
         
-        tts = gTTS(text=korean_text, lang='ko')
+        if not korean_only.strip():
+            return None
+            
+        tts = gTTS(text=korean_only, lang='ko')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except:
+    except Exception as e:
         return None
 
-# --- 5. SIDEBAR: RIWAYAT ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
     if st.button("+ Chat Baru", use_container_width=True):
@@ -61,7 +64,6 @@ with st.sidebar:
     c = conn.cursor()
     c.execute("SELECT id, title FROM sessions ORDER BY id DESC")
     sessions = c.fetchall()
-    
     for s_id, s_title in sessions:
         col_chat, col_del = st.columns([4, 1])
         with col_chat:
@@ -100,7 +102,7 @@ for m_id, role, content in current_messages:
         st.markdown(content)
         
         if role == "assistant" and "Maaf" not in content:
-            # Pola: [Korea | Romanisasi | Arti]
+            # Mencari format [Korea | Romaji | Indo]
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
                 for i, v in enumerate(variants):
@@ -109,21 +111,19 @@ for m_id, role, content in current_messages:
                         korea = parts[0].strip()
                         romaji = parts[1].strip()
                         indo = parts[2].strip()
-                    else:
-                        continue
+                        
+                        # Tampilan sesuai gambar 18:01 (Tombol isi Korea & Romaji)
+                        if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
+                            # Kirim hanya bagian 'korea' ke fungsi audio
+                            audio_fp = play_audio(korea)
+                            if audio_fp:
+                                st.audio(audio_fp, format="audio/mp3", autoplay=True)
+                        
+                        # Teks Bahasa Indonesia besar di bawah
+                        st.markdown(f"## {indo}")
+                        st.write("---")
 
-                    # --- TAMPILAN SESUAI GAMBAR ---
-                    # Baris 1: Tombol Audio (Korea + Romaji)
-                    if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
-                        audio_fp = play_audio(korea)
-                        if audio_fp:
-                            st.audio(audio_fp, format="audio/mp3", autoplay=True)
-                    
-                    # Baris 2: Arti Bahasa Indonesia (Teks Besar & Tebal)
-                    st.markdown(f"## {indo}")
-                    st.write("") # Spasi
-
-# --- 8. INPUT USER & PROMPT ---
+# --- 8. INPUT USER & PROMPT (DIPERBAIKI) ---
 if prompt := st.chat_input("Masukkan kata atau kalimat..."):
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
@@ -133,14 +133,14 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Sedang merinci..."):
-            # Prompt untuk memaksa format dan membatasi topik
+        with st.spinner("Guru sedang menjelaskan..."):
+            # Perbaikan Prompt agar jawaban lebih panjang dan detail
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. "
-                "BATASAN: Hanya jawab jika terkait terjemahan Indonesia ke Korea atau sebaliknya. "
-                "Jika di luar itu, jawab: 'Maaf, saya hanya khusus melayani terjemahan Indonesia-Korea.' "
-                "WAJIB FORMAT: [Korea | Romanisasi | Arti]. "
-                "Contoh: [먹습니다 | Meokseumnida | makan]."
+                "Kamu adalah Guru Bahasa Korea yang detail dan ramah. "
+                "TUGAS: Terjemahkan Indonesia-Korea atau sebaliknya. "
+                "BATASAN: Tolak pertanyaan non-bahasa dengan sopan. "
+                "KEWAJIBAN FORMAT: Setiap kosakata atau contoh kalimat HARUS ditulis dalam kurung siku: [Teks Korea | Romanisasi | Arti Indonesia]. "
+                "PENJELASAN: Jangan hanya memberi terjemahan singkat. Jelaskan sedikit tentang tata bahasanya atau kapan kalimat itu digunakan agar jawaban tidak terlalu pendek."
             )
             
             try:
@@ -151,7 +151,7 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
                 # Update judul chat
                 c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
                 if c.fetchone()[0] == "Percakapan Baru":
-                    res_title = model.generate_content(f"Judul 2 kata untuk: {prompt}")
+                    res_title = model.generate_content(f"Judul singkat untuk: {prompt}")
                     c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text[:20].strip(), st.session_state.current_session_id))
                 
                 c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
