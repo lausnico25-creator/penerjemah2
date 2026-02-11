@@ -3,6 +3,7 @@ import google.generativeai as genai
 from gtts import gTTS
 import sqlite3
 import io
+import re
 from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
@@ -30,17 +31,18 @@ except:
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# --- FUNGSI AUDIO (FIXED) ---
+# --- FUNGSI AUDIO ---
 def play_audio(text):
     try:
-        # Menggunakan gTTS untuk mengubah teks menjadi suara (Bahasa Korea)
+        # Hanya memproses teks jika tidak kosong
+        if not text.strip():
+            return None
         tts = gTTS(text=text, lang='ko')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
     except Exception as e:
-        st.error(f"Gagal memproses audio: {e}")
         return None
 
 # --- SIDEBAR: RIWAYAT CHAT ---
@@ -73,7 +75,7 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.caption("Fokus: Indonesia - Korea + Fitur Suara")
+st.caption("Fokus: Audio hanya pada kata Korea")
 
 # Ambil history dari DB
 c = conn.cursor()
@@ -83,14 +85,20 @@ current_messages = c.fetchall()
 for m_id, role, content in current_messages:
     with st.chat_message(role):
         st.markdown(content)
-        # Jika itu jawaban guru (assistant), beri opsi putar suara
+        
         if role == "assistant":
-            if st.button("🔊 Putar Suara Korea", key=f"audio_{m_id}"):
-                # Kita minta AI untuk hanya mengambil bagian hangeul/korea saja untuk dibaca
-                with st.spinner("Menyiapkan suara..."):
-                    audio_fp = play_audio(content)
-                    if audio_fp:
-                        st.audio(audio_fp, format="audio/mp3")
+            # Mencari teks yang berada di dalam kurung siku [ ] menggunakan Regex
+            # Contoh: "Bahasa Koreanya makan adalah [먹다]" -> akan mengambil "먹다"
+            korean_words = re.findall(r"\[(.*?)\]", content)
+            
+            if korean_words:
+                # Jika ada banyak kata, kita ambil yang pertama atau gabungkan
+                word_to_speak = ", ".join(korean_words)
+                if st.button(f"🔊 Dengar Pengucapan: {word_to_speak}", key=f"audio_{m_id}"):
+                    with st.spinner("Menyiapkan audio..."):
+                        audio_fp = play_audio(word_to_speak)
+                        if audio_fp:
+                            st.audio(audio_fp, format="audio/mp3")
 
 # --- INPUT USER ---
 if prompt := st.chat_input("Tanya guru..."):
@@ -101,7 +109,7 @@ if prompt := st.chat_input("Tanya guru..."):
     # Update Judul Otomatis
     c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
     if c.fetchone()[0] == "Percakapan Baru":
-        res_title = model.generate_content(f"Berikan judul 2 kata (B. Indo) untuk topik: {prompt}")
+        res_title = model.generate_content(f"Judul chat 2 kata untuk: {prompt}")
         c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
         conn.commit()
 
@@ -110,16 +118,17 @@ if prompt := st.chat_input("Tanya guru..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Guru sedang merespons..."):
+            # INSTRUKSI KHUSUS: Gunakan tanda kurung siku untuk kata Korea
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. Berikan jawaban dalam Bahasa Indonesia. "
-                "Tuliskan kata Korea (Hangeul) beserta artinya. "
-                "Berikan penjelasan yang ramah."
+                "Kamu adalah Guru Bahasa Korea. "
+                "PENTING: Setiap kali kamu menuliskan kata atau kalimat Korea yang utama, "
+                "WAJIB mengapitnya dengan kurung siku, contoh: [안녕하세요]. "
+                "Berikan penjelasan dalam Bahasa Indonesia yang ramah."
             )
             response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
             answer = response.text
             st.markdown(answer)
             
-            # Simpan jawaban ke DB
             c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
                       (st.session_state.current_session_id, "assistant", answer))
             conn.commit()
