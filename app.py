@@ -3,7 +3,7 @@ import google.generativeai as genai
 from gtts import gTTS
 import sqlite3
 import io
-import re  # Memperbaiki NameError: name 're' is not defined
+import re  # Memperbaiki NameError: re
 from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
@@ -61,7 +61,7 @@ with st.sidebar:
     sessions = c.fetchall()
     
     for s_id, s_title in sessions:
-        # PERBAIKAN: Menggunakan proporsi [4, 1] agar tidak error 0
+        # FIX: Menggunakan [4, 1] agar tidak error 0
         col_chat, col_del = st.columns([4, 1])
         with col_chat:
             if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
@@ -100,8 +100,7 @@ for m_id, role, content in current_messages:
         if role == "assistant":
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
-                st.write("🔈 **Dengarkan Pengucapan:**")
-                # Menggunakan baris baru untuk tombol agar tidak sempit di mobile
+                st.write("🔈 **Dengarkan:**")
                 for i, v in enumerate(variants):
                     if st.button(f"🔊 {v}", key=f"aud_{m_id}_{i}"):
                         audio_fp = play_audio(v)
@@ -114,27 +113,33 @@ if prompt := st.chat_input("Tanya guru..."):
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
     
-    # Update Judul Otomatis
-    c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
-    if c.fetchone()[0] == "Percakapan Baru":
-        res_title = model.generate_content(f"Berikan judul 2 kata untuk topik ini: {prompt}")
-        c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
-        conn.commit()
-
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
         with st.spinner("Guru sedang merinci..."):
-            instruction = (
-                "Kamu adalah Guru Bahasa Korea. Jika ada beberapa bentuk kata, "
-                "WAJIB apit setiap kata Korea dengan kurung siku, contoh: [먹다], [먹어요]. "
-                "Berikan penjelasan ramah dalam Bahasa Indonesia."
-            )
-            response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
-            answer = response.text
-            st.markdown(answer)
-            c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
-                      (st.session_state.current_session_id, "assistant", answer))
-            conn.commit()
+            try:
+                instruction = (
+                    "Kamu adalah Guru Bahasa Korea. Berikan terjemahan. "
+                    "WAJIB: Apit kata Korea dengan kurung siku, contoh: [먹다]. "
+                    "Berikan penjelasan ramah dalam Bahasa Indonesia."
+                )
+                response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
+                answer = response.text
+                st.markdown(answer)
+                
+                # Update Judul jika masih default
+                c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
+                if c.fetchone()[0] == "Percakapan Baru":
+                    res_title = model.generate_content(f"Judul chat 2 kata untuk: {prompt}")
+                    c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
+                
+                c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
+                          (st.session_state.current_session_id, "assistant", answer))
+                conn.commit()
+            except Exception as e:
+                if "ResourceExhausted" in str(e):
+                    st.warning("Aduh, kuota harian Guru lagi habis! Coba lagi dalam beberapa menit ya.")
+                else:
+                    st.error(f"Error: {e}")
     st.rerun()
