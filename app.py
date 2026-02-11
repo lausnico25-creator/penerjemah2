@@ -3,7 +3,7 @@ import google.generativeai as genai
 from gtts import gTTS
 import sqlite3
 import io
-import re  # <-- PENTING: Untuk memperbaiki error di foto kamu
+import re  # Memperbaiki NameError: name 're' is not defined
 from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
@@ -61,13 +61,13 @@ with st.sidebar:
     sessions = c.fetchall()
     
     for s_id, s_title in sessions:
-        col_chat, col_del = st.columns([0, 1])
+        # PERBAIKAN: Menggunakan proporsi [4, 1] agar tidak error 0
+        col_chat, col_del = st.columns([4, 1])
         with col_chat:
             if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
                 st.session_state.current_session_id = s_id
                 st.rerun()
         with col_del:
-            # FITUR HAPUS KEMBALI LAGI
             if st.button("🗑️", key=f"del_{s_id}"):
                 c.execute("DELETE FROM sessions WHERE id = ?", (s_id,))
                 c.execute("DELETE FROM messages WHERE session_id = ?", (s_id,))
@@ -88,8 +88,8 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.caption("Klik tombol audio di bawah jawaban guru untuk mendengar pengucapan spesifik.")
 
+c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
 current_messages = c.fetchall()
 
@@ -98,17 +98,15 @@ for m_id, role, content in current_messages:
         st.markdown(content)
         
         if role == "assistant":
-            # Mengambil kata dalam kurung siku [ ]
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
-                st.write("🔈 **Pilih audio:**")
-                cols = st.columns(len(variants))
+                st.write("🔈 **Dengarkan Pengucapan:**")
+                # Menggunakan baris baru untuk tombol agar tidak sempit di mobile
                 for i, v in enumerate(variants):
-                    with cols[i]:
-                        if st.button(f"🔊 {v}", key=f"aud_{m_id}_{i}"):
-                            audio_fp = play_audio(v)
-                            if audio_fp:
-                                st.audio(audio_fp, format="audio/mp3")
+                    if st.button(f"🔊 {v}", key=f"aud_{m_id}_{i}"):
+                        audio_fp = play_audio(v)
+                        if audio_fp:
+                            st.audio(audio_fp, format="audio/mp3")
 
 # --- INPUT USER ---
 if prompt := st.chat_input("Tanya guru..."):
@@ -116,10 +114,10 @@ if prompt := st.chat_input("Tanya guru..."):
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
     
-    # Auto-title
+    # Update Judul Otomatis
     c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
     if c.fetchone()[0] == "Percakapan Baru":
-        res_title = model.generate_content(f"Berikan judul 2 kata untuk topik: {prompt}")
+        res_title = model.generate_content(f"Berikan judul 2 kata untuk topik ini: {prompt}")
         c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
         conn.commit()
 
@@ -127,7 +125,7 @@ if prompt := st.chat_input("Tanya guru..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang merinci bentuk kata..."):
+        with st.spinner("Guru sedang merinci..."):
             instruction = (
                 "Kamu adalah Guru Bahasa Korea. Jika ada beberapa bentuk kata, "
                 "WAJIB apit setiap kata Korea dengan kurung siku, contoh: [먹다], [먹어요]. "
