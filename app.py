@@ -78,7 +78,7 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.caption("Fitur: Audio Fokus pada Terjemahan")
+st.caption("Fitur: Pilih Bentuk Kata untuk Audio")
 
 # Ambil history dari DB
 c = conn.cursor()
@@ -90,26 +90,26 @@ for m_id, role, content in current_messages:
     with st.chat_message(role):
         st.markdown(content)
         
-        # PERBAIKAN: Tombol audio muncul pada jawaban Guru (assistant)
-        # Tapi yang dibaca adalah pesan Siswa (user) sebelumnya
+        # Logika Audio Terpisah untuk jawaban Guru
         if role == "assistant":
-            # Cari pesan user tepat sebelum jawaban ini
-            c.execute("SELECT content FROM messages WHERE session_id = ? AND id < ? AND role = 'user' ORDER BY id DESC LIMIT 1", 
-                      (st.session_state.current_session_id, m_id))
-            last_user_msg = c.fetchone()
+            # Mencari semua kata di dalam kurung siku [ ]
+            # Contoh: "Bentuk dasar: [먹다], Bentuk formal: [먹습니다]"
+            korean_variants = re.findall(r"\[(.*?)\]", content)
             
-            if last_user_msg:
-                user_text = last_user_msg[0]
-                if st.button(f"🔊 Dengar Pengucapan: '{user_text}'", key=f"audio_{m_id}"):
-                    with st.spinner("Menyiapkan audio..."):
-                        # Kita minta AI untuk memberikan versi Korea dari input user tersebut saja
-                        # Agar audionya benar-benar bahasa Korea
-                        res = model.generate_content(f"Berikan HANYA teks bahasa Korea (Hangeul) dari kalimat ini: {user_text}")
-                        korean_only = res.text.strip()
-                        
-                        audio_fp = play_audio(korean_only)
-                        if audio_fp:
-                            st.audio(audio_fp, format="audio/mp3")
+            if korean_variants:
+                st.write("---")
+                st.write("🔈 **Pilih kata untuk didengar:**")
+                
+                # Membuat kolom agar tombol-tombolnya berjejer rapi
+                cols = st.columns(len(korean_variants))
+                
+                for i, word in enumerate(korean_variants):
+                    with cols[i]:
+                        if st.button(f"🔊 {word}", key=f"audio_{m_id}_{i}"):
+                            with st.spinner("..."):
+                                audio_fp = play_audio(word)
+                                if audio_fp:
+                                    st.audio(audio_fp, format="audio/mp3")
 
 # --- INPUT USER ---
 if prompt := st.chat_input("Tanya guru..."):
@@ -118,7 +118,7 @@ if prompt := st.chat_input("Tanya guru..."):
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
     
-    # Update Judul
+    # Update Judul Otomatis
     c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
     if c.fetchone()[0] == "Percakapan Baru":
         res_title = model.generate_content(f"Judul chat 2 kata untuk: {prompt}")
@@ -129,10 +129,13 @@ if prompt := st.chat_input("Tanya guru..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang merespons..."):
+        with st.spinner("Guru sedang merinci bentuk kata..."):
+            # INSTRUKSI: AI harus membungkus setiap bentuk kata Korea dengan [ ]
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. Terjemahkan input siswa ke Bahasa Korea. "
-                "Berikan Hangeul, cara baca, dan penjelasan tata bahasa dalam Bahasa Indonesia."
+                "Kamu adalah Guru Bahasa Korea. Jika siswa bertanya tentang kata kerja atau kalimat, "
+                "berikan beberapa bentuk (contoh: Dasar, Sopan, Formal). "
+                "WAJIB: Setiap kata Korea tersebut harus diapit kurung siku, contoh: [먹다], [먹어요], [먹습니다]. "
+                "Berikan penjelasan singkat dalam Bahasa Indonesia."
             )
             response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
             answer = response.text
