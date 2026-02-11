@@ -3,10 +3,11 @@ import google.generativeai as genai
 from gtts import gTTS
 import sqlite3
 import io
+import re  # <-- PENTING: Untuk memperbaiki error di foto kamu
 from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Tutor Korea-Indo AI", page_icon="🇰🇷", layout="wide")
+st.set_page_config(page_title="Tutor Korea AI", page_icon="🇰🇷", layout="wide")
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -33,17 +34,15 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 # --- FUNGSI AUDIO ---
 def play_audio(text):
     try:
-        # Kita deteksi jika teks mengandung hangeul, gunakan lang 'ko'
-        # Jika tidak, gTTS biasanya otomatis atau kita set ke 'ko' karena ini tutor Korea
         tts = gTTS(text=text, lang='ko')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except Exception as e:
+    except:
         return None
 
-# --- SIDEBAR: RIWAYAT CHAT ---
+# --- SIDEBAR: RIWAYAT & HAPUS ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
     
@@ -56,14 +55,25 @@ with st.sidebar:
         st.rerun()
 
     st.write("---")
+    
     c = conn.cursor()
     c.execute("SELECT id, title FROM sessions ORDER BY id DESC")
     sessions = c.fetchall()
     
     for s_id, s_title in sessions:
-        if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
-            st.session_state.current_session_id = s_id
-            st.rerun()
+        col_chat, col_del = st.columns([0, 1])
+        with col_chat:
+            if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
+                st.session_state.current_session_id = s_id
+                st.rerun()
+        with col_del:
+            # FITUR HAPUS KEMBALI LAGI
+            if st.button("🗑️", key=f"del_{s_id}"):
+                c.execute("DELETE FROM sessions WHERE id = ?", (s_id,))
+                c.execute("DELETE FROM messages WHERE session_id = ?", (s_id,))
+                conn.commit()
+                st.session_state.current_session_id = None
+                st.rerun()
 
 # --- LOGIKA SESI ---
 if "current_session_id" not in st.session_state or st.session_state.current_session_id is None:
@@ -78,50 +88,38 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.caption("Fitur: Pilih Bentuk Kata untuk Audio")
+st.caption("Klik tombol audio di bawah jawaban guru untuk mendengar pengucapan spesifik.")
 
-# Ambil history dari DB
-c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
 current_messages = c.fetchall()
 
-# Menampilkan chat
 for m_id, role, content in current_messages:
     with st.chat_message(role):
         st.markdown(content)
         
-        # Logika Audio Terpisah untuk jawaban Guru
         if role == "assistant":
-            # Mencari semua kata di dalam kurung siku [ ]
-            # Contoh: "Bentuk dasar: [먹다], Bentuk formal: [먹습니다]"
-            korean_variants = re.findall(r"\[(.*?)\]", content)
-            
-            if korean_variants:
-                st.write("---")
-                st.write("🔈 **Pilih kata untuk didengar:**")
-                
-                # Membuat kolom agar tombol-tombolnya berjejer rapi
-                cols = st.columns(len(korean_variants))
-                
-                for i, word in enumerate(korean_variants):
+            # Mengambil kata dalam kurung siku [ ]
+            variants = re.findall(r"\[(.*?)\]", content)
+            if variants:
+                st.write("🔈 **Pilih audio:**")
+                cols = st.columns(len(variants))
+                for i, v in enumerate(variants):
                     with cols[i]:
-                        if st.button(f"🔊 {word}", key=f"audio_{m_id}_{i}"):
-                            with st.spinner("..."):
-                                audio_fp = play_audio(word)
-                                if audio_fp:
-                                    st.audio(audio_fp, format="audio/mp3")
+                        if st.button(f"🔊 {v}", key=f"aud_{m_id}_{i}"):
+                            audio_fp = play_audio(v)
+                            if audio_fp:
+                                st.audio(audio_fp, format="audio/mp3")
 
 # --- INPUT USER ---
 if prompt := st.chat_input("Tanya guru..."):
-    # Simpan pesan user
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
     
-    # Update Judul Otomatis
+    # Auto-title
     c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
     if c.fetchone()[0] == "Percakapan Baru":
-        res_title = model.generate_content(f"Judul chat 2 kata untuk: {prompt}")
+        res_title = model.generate_content(f"Berikan judul 2 kata untuk topik: {prompt}")
         c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
         conn.commit()
 
@@ -130,17 +128,14 @@ if prompt := st.chat_input("Tanya guru..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Guru sedang merinci bentuk kata..."):
-            # INSTRUKSI: AI harus membungkus setiap bentuk kata Korea dengan [ ]
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. Jika siswa bertanya tentang kata kerja atau kalimat, "
-                "berikan beberapa bentuk (contoh: Dasar, Sopan, Formal). "
-                "WAJIB: Setiap kata Korea tersebut harus diapit kurung siku, contoh: [먹다], [먹어요], [먹습니다]. "
-                "Berikan penjelasan singkat dalam Bahasa Indonesia."
+                "Kamu adalah Guru Bahasa Korea. Jika ada beberapa bentuk kata, "
+                "WAJIB apit setiap kata Korea dengan kurung siku, contoh: [먹다], [먹어요]. "
+                "Berikan penjelasan ramah dalam Bahasa Indonesia."
             )
             response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
             answer = response.text
             st.markdown(answer)
-            
             c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
                       (st.session_state.current_session_id, "assistant", answer))
             conn.commit()
