@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 
 # --- 1. KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Penerjemah Korea-Indo", page_icon="🇰🇷", layout="wide")
+st.set_page_config(page_title="Tutor Korea AI", page_icon="🇰🇷", layout="wide")
 
 # --- 2. DATABASE SETUP ---
 def init_db():
@@ -34,7 +34,7 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 # --- 4. FUNGSI AUDIO ---
 def play_audio(text):
     try:
-        # Hanya ambil karakter Korea untuk audio agar tidak bingung
+        # Hanya ambil karakter Korea untuk diproses gTTS
         korean_text = re.sub(r'[^가-힣\s]', '', text)
         if not korean_text.strip(): return None
         
@@ -52,7 +52,7 @@ with st.sidebar:
     if st.button("+ Chat Baru", use_container_width=True):
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
-        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Terjemahan Baru", now))
+        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
         conn.commit()
         st.session_state.current_session_id = c.lastrowid
         st.rerun()
@@ -83,13 +83,13 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
     else:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
-        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Terjemahan Baru", now))
+        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
         conn.commit()
         st.session_state.current_session_id = c.lastrowid
 
 # --- 7. TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.caption("Khusus Terjemahan Indonesia ↔ Korea")
+st.info("Saya hanya melayani terjemahan Indonesia ↔ Korea.")
 
 c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
@@ -103,6 +103,7 @@ for m_id, role, content in current_messages:
             # Mencari pola [Korea | Romanisasi | Arti]
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
+                st.write("---")
                 for i, v in enumerate(variants):
                     if "|" in v:
                         parts = v.split("|")
@@ -112,20 +113,25 @@ for m_id, role, content in current_messages:
                     else:
                         korea, romaji, indo = v.strip(), "", ""
 
-                    # Tampilan bertumpuk sesuai permintaan
-                    st.write("") # Spasi antar item
+                    # --- TAMPILAN SESUAI REQUEST GAMBAR ---
+                    # 1. Tombol Audio
                     if st.button(f"🔊 {korea}", key=f"aud_{m_id}_{i}"):
                         audio_fp = play_audio(korea)
                         if audio_fp:
                             st.audio(audio_fp, format="audio/mp3", autoplay=True)
                     
+                    # 2. Romanisasi (Teks Miring)
                     if romaji:
-                        st.text(f"{romaji}") # Baris 2: Romanisasi
+                        st.markdown(f"*{romaji}*")
+                    
+                    # 3. Arti Bahasa Indonesia (Teks Tebal/Besar)
                     if indo:
-                        st.markdown(f"**{indo}**") # Baris 3: Arti (Bold)
+                        st.markdown(f"### {indo}")
+                    
+                    st.write("") # Memberi sedikit jarak antar kosa kata
 
-# --- 8. INPUT & PROMPT ---
-if prompt := st.chat_input("Masukkan kata atau kalimat..."):
+# --- 8. INPUT USER & FILTER KETAT ---
+if prompt := st.chat_input("Masukkan kata/kalimat (Indo/Korea)..."):
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
@@ -134,14 +140,16 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang menerjemahkan..."):
+        with st.spinner("Sedang menerjemahkan..."):
+            # SYSTEM PROMPT UNTUK FILTER DAN FORMAT
             instruction = (
-                "Kamu adalah Guru Bahasa Korea khusus terjemahan Indonesia-Korea. "
-                "PEMBATAS: Tolak pertanyaan selain terjemahan kedua bahasa ini dengan sopan. "
-                "FORMAT WAJIB: Setiap kosa kata atau kalimat Korea harus ditulis dalam kurung siku dengan format: "
+                "Kamu adalah Guru Bahasa Korea ahli terjemahan. "
+                "ATURAN KETAT: Kamu HANYA boleh menjawab pertanyaan tentang terjemahan Bahasa Indonesia ke Korea atau sebaliknya. "
+                "Jika user bertanya hal lain (seperti coding, matematika, sains, atau bahasa selain Korea/Indo), "
+                "jawab dengan: 'Maaf, saya hanya khusus melayani terjemahan Indonesia-Korea.' "
+                "FORMAT JAWABAN: Untuk setiap kata/kalimat hasil terjemahan, WAJIB gunakan format: "
                 "[Teks Korea | Romanisasi | Arti Indonesia]. "
-                "Contoh: [먹다 | Meokda | Makan]. "
-                "Berikan penjelasan singkat jika perlu."
+                "Contoh: [먹다 | Meokda | Makan]."
             )
             
             try:
@@ -149,10 +157,10 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
                 answer = response.text
                 st.markdown(answer)
                 
-                # Update judul chat
+                # Update judul chat otomatis
                 c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
-                if c.fetchone()[0] == "Terjemahan Baru":
-                    res_title = model.generate_content(f"Judul 2 kata untuk: {prompt}")
+                if c.fetchone()[0] == "Percakapan Baru":
+                    res_title = model.generate_content(f"Berikan judul 2 kata untuk topik ini: {prompt}")
                     c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text[:20].strip(), st.session_state.current_session_id))
                 
                 c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
@@ -160,4 +168,4 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
                 conn.commit()
                 st.rerun()
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Terjadi kesalahan: {e}")
