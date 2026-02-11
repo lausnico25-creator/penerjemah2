@@ -45,31 +45,49 @@ def play_audio(text):
     except Exception as e:
         return None
 
-# --- SIDEBAR: RIWAYAT CHAT ---
+# --- SIDEBAR: RIWAYAT CHAT DENGAN FITUR HAPUS ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
     
-    # PERBAIKAN: Tombol Chat Baru
-    if st.button("+ Chat Baru", use_container_width=True):
+    # Tombol Chat Baru
+    if st.button("+ Chat Baru", use_container_width=True, type="primary"):
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
-        # Buat sesi baru di database
         c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
         conn.commit()
-        # Langsung set ID sesi aktif ke yang baru saja dibuat
         st.session_state.current_session_id = c.lastrowid
-        # Paksa Streamlit refresh agar layar kosong (mulai chat baru)
         st.rerun()
 
     st.write("---")
+    st.subheader("Daftar Riwayat")
+    
     c = conn.cursor()
     c.execute("SELECT id, title FROM sessions ORDER BY id DESC")
     sessions = c.fetchall()
     
     for s_id, s_title in sessions:
-        if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
-            st.session_state.current_session_id = s_id
-            st.rerun()
+        # Membuat 2 kolom: satu untuk judul chat, satu untuk tombol hapus
+        cols = st.columns([0.8, 0.2])
+        
+        # Kolom 1: Tombol untuk memilih chat
+        with cols[0]:
+            if st.button(f"📄 {s_title}", key=f"select_{s_id}", use_container_width=True):
+                st.session_state.current_session_id = s_id
+                st.rerun()
+        
+        # Kolom 2: Tombol merah untuk menghapus chat
+        with cols[1]:
+            if st.button("🗑️", key=f"delete_{s_id}", help="Hapus percakapan ini"):
+                c.execute("DELETE FROM sessions WHERE id = ?", (s_id,))
+                c.execute("DELETE FROM messages WHERE session_id = ?", (s_id,))
+                conn.commit()
+                
+                # Jika yang dihapus adalah chat yang sedang dibuka, reset ke chat terbaru
+                if st.session_state.current_session_id == s_id:
+                    st.session_state.current_session_id = None
+                
+                st.toast(f"Percakapan '{s_title}' dihapus")
+                st.rerun()
 
 # --- LOGIKA SESI (Pastikan ID selalu valid) ---
 if "current_session_id" not in st.session_state:
