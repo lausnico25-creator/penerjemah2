@@ -48,8 +48,17 @@ def play_audio(text):
 # --- SIDEBAR: RIWAYAT CHAT ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
+    
+    # PERBAIKAN: Tombol Chat Baru
     if st.button("+ Chat Baru", use_container_width=True):
-        st.session_state.current_session_id = None
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c = conn.cursor()
+        # Buat sesi baru di database
+        c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
+        conn.commit()
+        # Langsung set ID sesi aktif ke yang baru saja dibuat
+        st.session_state.current_session_id = c.lastrowid
+        # Paksa Streamlit refresh agar layar kosong (mulai chat baru)
         st.rerun()
 
     st.write("---")
@@ -62,11 +71,12 @@ with st.sidebar:
             st.session_state.current_session_id = s_id
             st.rerun()
 
-# --- LOGIKA SESI ---
-if "current_session_id" not in st.session_state or st.session_state.current_session_id is None:
+# --- LOGIKA SESI (Pastikan ID selalu valid) ---
+if "current_session_id" not in st.session_state:
     if sessions:
         st.session_state.current_session_id = sessions[0][0]
     else:
+        # Jika benar-benar kosong, buat satu
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
         c.execute("INSERT INTO sessions (title, created_at) VALUES (?, ?)", ("Percakapan Baru", now))
