@@ -26,16 +26,14 @@ conn = init_db()
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except:
-    st.error("API Key belum disetting!")
+    st.error("API Key belum disetting di Secrets!")
     st.stop()
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# --- 4. FUNGSI AUDIO (HANYA BACA HANGUL) ---
+# --- 4. FUNGSI AUDIO (HANYA HANGUL) ---
 def play_audio(text):
     try:
-        # Menghapus karakter latin dan simbol agar gTTS fokus pada Hangul
-        # Angka yang sudah diubah jadi Hangul oleh AI akan terbaca dengan sempurna di sini
         korean_only = re.sub(r'[^가-힣\s]', '', text)
         if not korean_only.strip():
             return None
@@ -89,7 +87,7 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- 7. TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.write("Hanya melayani terjemahan Indonesia ↔ Korea.")
+st.write("Belajar terjemahan Indonesia ↔ Korea dengan penjelasan lengkap.")
 
 c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
@@ -104,25 +102,21 @@ for m_id, role, content in current_messages:
             if variants:
                 for i, v in enumerate(variants):
                     parts = v.split("|")
-                    
                     korea = parts[0].strip() if len(parts) > 0 else "..."
                     romaji = parts[1].strip() if len(parts) > 1 else ""
                     indo = parts[2].strip() if len(parts) > 2 else ""
 
-                    # Tombol Audio (Korea: Romaji)
                     if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
                         audio_fp = play_audio(korea)
                         if audio_fp:
                             st.audio(audio_fp, format="audio/mp3", autoplay=True)
                     
-                    # Teks Indonesia (Ukuran Kecil & Normal)
                     if indo:
                         st.write(indo) 
-                    
                     st.write("---")
 
-# --- 8. INPUT USER & PROMPT (DENGAN INSTRUKSI ANGKA) ---
-if prompt := st.chat_input("Masukkan kata atau kalimat..."):
+# --- 8. INPUT USER & PROMPT (DIPERBARUI UNTUK JAWABAN LENGKAP) ---
+if prompt := st.chat_input("Tanya guru..."):
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
@@ -131,14 +125,18 @@ if prompt := st.chat_input("Masukkan kata atau kalimat..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang merinci..."):
+        with st.spinner("Guru sedang merinci penjelasan..."):
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. Jawab dengan ramah dan beri penjelasan."
-                "BATASAN: Hanya layani terjemahan Indonesia-Korea."
-                "WAJIB FORMAT: [Teks Korea | Romanisasi | Arti Indonesia]."
-                "ATURAN ANGKA: Jika ada angka dalam kalimat, JANGAN tulis angka (1, 2, 3) di bagian Teks Korea. "
-                "Ganti angka tersebut dengan tulisan Hangul agar bisa dibaca oleh sistem suara. "
-                "Contoh: Jangan tulis [1시], tapi tulis [한 시 | Han-si | Jam 1]."
+                "Kamu adalah Guru Bahasa Korea yang sangat detail dan suportif. "
+                "TUGAS UTAMA: Terjemahkan Indonesia-Korea atau sebaliknya. "
+                "BATASAN: Tolak pertanyaan non-bahasa dengan ramah. "
+                "\n\nATURAN JAWABAN:"
+                "\n1. Berikan terjemahan langsung dari pertanyaan user."
+                "\n2. Berikan variasi lain (misal: bentuk formal/sopan/informal)."
+                "\n3. Berikan contoh kalimat pendek menggunakan kata tersebut."
+                "\n4. Jelaskan tata bahasa yang digunakan secara singkat namun jelas agar jawaban tidak terlalu pendek."
+                "\n\nWAJIB FORMAT: Setiap ada kosa kata atau kalimat Korea, gunakan format [Teks Korea | Romanisasi | Arti Indonesia]. "
+                "\nATURAN ANGKA: Ubah semua angka menjadi tulisan Hangul di bagian 'Teks Korea' agar bisa dibaca (contoh: [dua] menjadi [둘] atau [이])."
             )
             
             try:
