@@ -26,7 +26,7 @@ conn = init_db()
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except:
-    st.error("API Key belum disetting di Secrets!")
+    st.error("API Key belum disetting!")
     st.stop()
 
 model = genai.GenerativeModel("gemini-2.5-flash")
@@ -45,7 +45,7 @@ def play_audio(text):
     except:
         return None
 
-# --- 5. SIDEBAR ---
+# --- 5. SIDEBAR & AUTO-JUDUL ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
     if st.button("+ Chat Baru", use_container_width=True):
@@ -87,7 +87,6 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- 7. TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
-st.write("Belajar terjemahan Indonesia ↔ Korea dengan penjelasan lengkap.")
 
 c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
@@ -98,25 +97,29 @@ for m_id, role, content in current_messages:
         st.markdown(content)
         
         if role == "assistant" and "Maaf" not in content:
+            # Cari format [Korea | Romaji | Indo]
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
                 for i, v in enumerate(variants):
                     parts = v.split("|")
-                    korea = parts[0].strip() if len(parts) > 0 else "..."
-                    romaji = parts[1].strip() if len(parts) > 1 else ""
-                    indo = parts[2].strip() if len(parts) > 2 else ""
+                    if len(parts) >= 3:
+                        korea = parts[0].strip()
+                        romaji = parts[1].strip()
+                        indo = parts[2].strip()
 
-                    if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
-                        audio_fp = play_audio(korea)
-                        if audio_fp:
-                            st.audio(audio_fp, format="audio/mp3", autoplay=True)
-                    
-                    if indo:
-                        st.write(indo) 
-                    st.write("---")
+                        # Tombol Audio
+                        if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
+                            audio_fp = play_audio(korea)
+                            if audio_fp:
+                                st.audio(audio_fp, format="audio/mp3", autoplay=True)
+                        
+                        # Teks Terjemahan (Kecil)
+                        st.write(indo)
+                        st.write("---")
 
-# --- 8. INPUT USER & PROMPT (DIPERBARUI UNTUK JAWABAN LENGKAP) ---
+# --- 8. INPUT USER & PROMPT ---
 if prompt := st.chat_input("Tanya guru..."):
+    # Simpan pesan user
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
@@ -125,18 +128,13 @@ if prompt := st.chat_input("Tanya guru..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang merinci penjelasan..."):
+        with st.spinner("Menerjemahkan..."):
             instruction = (
-                "Kamu adalah Guru Bahasa Korea yang sangat detail dan suportif. "
-                "TUGAS UTAMA: Terjemahkan Indonesia-Korea atau sebaliknya. "
-                "BATASAN: Tolak pertanyaan non-bahasa dengan ramah. "
-                "\n\nATURAN JAWABAN:"
-                "\n1. Berikan terjemahan langsung dari pertanyaan user."
-                "\n2. Berikan variasi lain (misal: bentuk formal/sopan/informal)."
-                "\n3. Berikan contoh kalimat pendek menggunakan kata tersebut."
-                "\n4. Jelaskan tata bahasa yang digunakan secara singkat namun jelas agar jawaban tidak terlalu pendek."
-                "\n\nWAJIB FORMAT: Setiap ada kosa kata atau kalimat Korea, gunakan format [Teks Korea | Romanisasi | Arti Indonesia]. "
-                "\nATURAN ANGKA: Ubah semua angka menjadi tulisan Hangul di bagian 'Teks Korea' agar bisa dibaca (contoh: [dua] menjadi [둘] atau [이])."
+                "Kamu adalah Guru Bahasa Korea. Jawab dengan sangat ringkas."
+                "TUGAS: Terjemahkan kata/frasa ke berbagai bentuk (Formal, Sopan, Informal)."
+                "BATASAN AUDIO: Hanya gunakan format kurung siku [Korea | Romaji | Indo] untuk kata-kata inti tersebut. "
+                "Jangan gunakan kurung siku untuk contoh kalimat atau penjelasan tambahan."
+                "ATURAN ANGKA: Tulis angka dalam Hangul."
             )
             
             try:
@@ -144,6 +142,16 @@ if prompt := st.chat_input("Tanya guru..."):
                 answer = response.text
                 st.markdown(answer)
                 
+                # UPDATE JUDUL OTOMATIS (Fix)
+                c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
+                current_title = c.fetchone()[0]
+                if current_title == "Percakapan Baru":
+                    # Generate judul singkat dari prompt
+                    title_gen = model.generate_content(f"Berikan 1-2 kata saja sebagai judul untuk topik ini: {prompt}")
+                    new_title = title_gen.text.strip().replace("*", "")[:20]
+                    c.execute("UPDATE sessions SET title = ? WHERE id = ?", (new_title, st.session_state.current_session_id))
+                
+                # Simpan jawaban assistant
                 c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
                           (st.session_state.current_session_id, "assistant", answer))
                 conn.commit()
