@@ -3,11 +3,10 @@ import google.generativeai as genai
 from gtts import gTTS
 import sqlite3
 import io
-import re  # Memperbaiki NameError: re
 from datetime import datetime
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Tutor Korea AI", page_icon="🇰🇷", layout="wide")
+st.set_page_config(page_title="Tutor Korea-Indo AI", page_icon="🇰🇷", layout="wide")
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -34,15 +33,17 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 # --- FUNGSI AUDIO ---
 def play_audio(text):
     try:
+        # Kita deteksi jika teks mengandung hangeul, gunakan lang 'ko'
+        # Jika tidak, gTTS biasanya otomatis atau kita set ke 'ko' karena ini tutor Korea
         tts = gTTS(text=text, lang='ko')
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except:
+    except Exception as e:
         return None
 
-# --- SIDEBAR: RIWAYAT & HAPUS ---
+# --- SIDEBAR: RIWAYAT CHAT ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
     
@@ -55,25 +56,14 @@ with st.sidebar:
         st.rerun()
 
     st.write("---")
-    
     c = conn.cursor()
     c.execute("SELECT id, title FROM sessions ORDER BY id DESC")
     sessions = c.fetchall()
     
     for s_id, s_title in sessions:
-        # FIX: Menggunakan [4, 1] agar tidak error 0
-        col_chat, col_del = st.columns([4, 1])
-        with col_chat:
-            if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
-                st.session_state.current_session_id = s_id
-                st.rerun()
-        with col_del:
-            if st.button("🗑️", key=f"del_{s_id}"):
-                c.execute("DELETE FROM sessions WHERE id = ?", (s_id,))
-                c.execute("DELETE FROM messages WHERE session_id = ?", (s_id,))
-                conn.commit()
-                st.session_state.current_session_id = None
-                st.rerun()
+        if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
+            st.session_state.current_session_id = s_id
+            st.rerun()
 
 # --- LOGIKA SESI ---
 if "current_session_id" not in st.session_state or st.session_state.current_session_id is None:
@@ -88,58 +78,67 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
 
 # --- TAMPILAN UTAMA ---
 st.title("🎓 Guru Bahasa Korea AI")
+st.caption("Fitur: Audio Fokus pada Terjemahan")
 
+# Ambil history dari DB
 c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
 current_messages = c.fetchall()
 
+# Menampilkan chat
 for m_id, role, content in current_messages:
     with st.chat_message(role):
         st.markdown(content)
         
+        # PERBAIKAN: Tombol audio muncul pada jawaban Guru (assistant)
+        # Tapi yang dibaca adalah pesan Siswa (user) sebelumnya
         if role == "assistant":
-            variants = re.findall(r"\[(.*?)\]", content)
-            if variants:
-                st.write("🔈 **Dengarkan:**")
-                for i, v in enumerate(variants):
-                    if st.button(f"🔊 {v}", key=f"aud_{m_id}_{i}"):
-                        audio_fp = play_audio(v)
+            # Cari pesan user tepat sebelum jawaban ini
+            c.execute("SELECT content FROM messages WHERE session_id = ? AND id < ? AND role = 'user' ORDER BY id DESC LIMIT 1", 
+                      (st.session_state.current_session_id, m_id))
+            last_user_msg = c.fetchone()
+            
+            if last_user_msg:
+                user_text = last_user_msg[0]
+                if st.button(f"🔊 Dengar Pengucapan: '{user_text}'", key=f"audio_{m_id}"):
+                    with st.spinner("Menyiapkan audio..."):
+                        # Kita minta AI untuk memberikan versi Korea dari input user tersebut saja
+                        # Agar audionya benar-benar bahasa Korea
+                        res = model.generate_content(f"Berikan HANYA teks bahasa Korea (Hangeul) dari kalimat ini: {user_text}")
+                        korean_only = res.text.strip()
+                        
+                        audio_fp = play_audio(korean_only)
                         if audio_fp:
                             st.audio(audio_fp, format="audio/mp3")
 
 # --- INPUT USER ---
 if prompt := st.chat_input("Tanya guru..."):
+    # Simpan pesan user
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
     
+    # Update Judul
+    c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
+    if c.fetchone()[0] == "Percakapan Baru":
+        res_title = model.generate_content(f"Judul chat 2 kata untuk: {prompt}")
+        c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
+        conn.commit()
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Guru sedang merinci..."):
-            try:
-                instruction = (
-                    "Kamu adalah Guru Bahasa Korea. Berikan terjemahan. "
-                    "WAJIB: Apit kata Korea dengan kurung siku, contoh: [먹다]. "
-                    "Berikan penjelasan ramah dalam Bahasa Indonesia."
-                )
-                response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
-                answer = response.text
-                st.markdown(answer)
-                
-                # Update Judul jika masih default
-                c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
-                if c.fetchone()[0] == "Percakapan Baru":
-                    res_title = model.generate_content(f"Judul chat 2 kata untuk: {prompt}")
-                    c.execute("UPDATE sessions SET title = ? WHERE id = ?", (res_title.text.strip(), st.session_state.current_session_id))
-                
-                c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
-                          (st.session_state.current_session_id, "assistant", answer))
-                conn.commit()
-            except Exception as e:
-                if "ResourceExhausted" in str(e):
-                    st.warning("Aduh, kuota harian Guru lagi habis! Coba lagi dalam beberapa menit ya.")
-                else:
-                    st.error(f"Error: {e}")
+        with st.spinner("Guru sedang merespons..."):
+            instruction = (
+                "Kamu adalah Guru Bahasa Korea. Terjemahkan input siswa ke Bahasa Korea. "
+                "Berikan Hangeul, cara baca, dan penjelasan tata bahasa dalam Bahasa Indonesia."
+            )
+            response = model.generate_content(f"{instruction}\n\nSiswa: {prompt}")
+            answer = response.text
+            st.markdown(answer)
+            
+            c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
+                      (st.session_state.current_session_id, "assistant", answer))
+            conn.commit()
     st.rerun()
