@@ -86,7 +86,8 @@ if "current_session_id" not in st.session_state or st.session_state.current_sess
         st.session_state.current_session_id = c.lastrowid
 
 # --- 7. TAMPILAN UTAMA ---
-st.title("🎓 Guru Bahasa Korea AI")
+st.title("🎓 KA Tutor Bahasa Korea-Indonesia🇰🇷🇮🇩")
+st.caption("Apa yang bisa saya bantu?🧑‍🏫)
 
 c = conn.cursor()
 c.execute("SELECT id, role, content FROM messages WHERE session_id = ?", (st.session_state.current_session_id,))
