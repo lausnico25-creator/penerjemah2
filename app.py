@@ -31,7 +31,7 @@ except:
 
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# --- 4. FUNGSI AUDIO (HANYA HANGUL) ---
+# --- 4. FUNGSI AUDIO ---
 def play_audio(text):
     try:
         korean_only = re.sub(r'[^가-힣\s]', '', text)
@@ -45,7 +45,7 @@ def play_audio(text):
     except:
         return None
 
-# --- 5. SIDEBAR & AUTO-JUDUL ---
+# --- 5. SIDEBAR & RIWAYAT ---
 with st.sidebar:
     st.title("🇰🇷 Riwayat Belajar")
     if st.button("+ Chat Baru", use_container_width=True):
@@ -97,7 +97,6 @@ for m_id, role, content in current_messages:
         st.markdown(content)
         
         if role == "assistant" and "Maaf" not in content:
-            # Cari format [Korea | Romaji | Indo]
             variants = re.findall(r"\[(.*?)\]", content)
             if variants:
                 for i, v in enumerate(variants):
@@ -107,19 +106,16 @@ for m_id, role, content in current_messages:
                         romaji = parts[1].strip()
                         indo = parts[2].strip()
 
-                        # Tombol Audio
                         if st.button(f"🔊 {korea}: {romaji}", key=f"aud_{m_id}_{i}"):
                             audio_fp = play_audio(korea)
                             if audio_fp:
                                 st.audio(audio_fp, format="audio/mp3", autoplay=True)
                         
-                        # Teks Terjemahan (Kecil)
                         st.write(indo)
                         st.write("---")
 
-# --- 8. INPUT USER & PROMPT ---
+# --- 8. INPUT USER & PROMPT (DIPERBARUI) ---
 if prompt := st.chat_input("Tanya guru..."):
-    # Simpan pesan user
     c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
               (st.session_state.current_session_id, "user", prompt))
     conn.commit()
@@ -128,13 +124,15 @@ if prompt := st.chat_input("Tanya guru..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Menerjemahkan..."):
+        with st.spinner("Guru sedang memproses..."):
             instruction = (
-                "Kamu adalah Guru Bahasa Korea. Jawab dengan sangat ringkas."
-                "TUGAS: Terjemahkan kata/frasa ke berbagai bentuk (Formal, Sopan, Informal)."
-                "BATASAN AUDIO: Hanya gunakan format kurung siku [Korea | Romaji | Indo] untuk kata-kata inti tersebut. "
-                "Jangan gunakan kurung siku untuk contoh kalimat atau penjelasan tambahan."
-                "ATURAN ANGKA: Tulis angka dalam Hangul."
+                "Kamu adalah Guru Bahasa Korea. Jawab dengan sangat ringkas namun lengkap."
+                "\nTUGAS: Terjemahkan kata ke dalam berbagai bentuk berikut:"
+                "\n1. Tingkatan Kesopanan (Formal, Sopan/Banmal)."
+                "\n2. Keterangan Waktu (Bentuk Lampau/Past, Sedang dilakukan/Continuous, Akan datang/Future)."
+                "\n\nWAJIB FORMAT: Gunakan [Teks Korea | Romanisasi | Arti Indonesia] hanya untuk jenis bentuk kata tersebut. "
+                "\nJangan berikan tombol audio (kurung siku) untuk contoh kalimat. "
+                "\nATURAN ANGKA: Tulis angka dalam Hangul."
             )
             
             try:
@@ -142,16 +140,13 @@ if prompt := st.chat_input("Tanya guru..."):
                 answer = response.text
                 st.markdown(answer)
                 
-                # UPDATE JUDUL OTOMATIS (Fix)
+                # AUTO-JUDUL
                 c.execute("SELECT title FROM sessions WHERE id = ?", (st.session_state.current_session_id,))
-                current_title = c.fetchone()[0]
-                if current_title == "Percakapan Baru":
-                    # Generate judul singkat dari prompt
-                    title_gen = model.generate_content(f"Berikan 1-2 kata saja sebagai judul untuk topik ini: {prompt}")
-                    new_title = title_gen.text.strip().replace("*", "")[:20]
+                if c.fetchone()[0] == "Percakapan Baru":
+                    title_gen = model.generate_content(f"Berikan 1 kata judul (tanpa simbol) untuk: {prompt}")
+                    new_title = title_gen.text.strip().replace("*", "")[:15]
                     c.execute("UPDATE sessions SET title = ? WHERE id = ?", (new_title, st.session_state.current_session_id))
                 
-                # Simpan jawaban assistant
                 c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)", 
                           (st.session_state.current_session_id, "assistant", answer))
                 conn.commit()
