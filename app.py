@@ -31,7 +31,7 @@ except:
     st.error("API Key belum disetting di Secrets!")
     st.stop()
 
-model = genai.GenerativeModel("gemini-2.5-flash")
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # --- 4. FUNGSI PENDUKUNG ---
 def play_audio(text):
@@ -48,7 +48,8 @@ def play_audio(text):
 # --- 5. SIDEBAR & LOGIKA NAVIGASI ---
 with st.sidebar:
     st.title("🇰🇷 Panel Kontrol")
-    mode = st.radio("Pilih Mode:", ["Belajar & Tanya", "Roleplay Percakapan", "Kuis Berjenjang", "Konverter Angka"])
+    # Mode Konverter Angka telah dihapus
+    mode = st.radio("Pilih Mode:", ["Belajar & Tanya", "Roleplay Percakapan", "Kuis Berjenjang"])
     
     st.write("---")
     if st.button("+ Chat Baru", use_container_width=True):
@@ -58,6 +59,7 @@ with st.sidebar:
         conn.commit()
         st.session_state.current_session_id = c.lastrowid
         if 'curr_q' in st.session_state: del st.session_state.curr_q
+        if 'rp_active' in st.session_state: del st.session_state.rp_active
         st.rerun()
 
     st.write("### Riwayat Belajar")
@@ -79,7 +81,6 @@ with st.sidebar:
                 conn.commit()
                 st.rerun()
 
-# Cek Session ID Aktif
 if "current_session_id" not in st.session_state:
     if sessions_list: st.session_state.current_session_id = sessions_list[0][0]
     else:
@@ -116,81 +117,60 @@ if mode == "Belajar & Tanya":
 
     if prompt := st.chat_input("Tanya guru..."):
         st.chat_message("user").markdown(prompt)
+        
+        # UPDATE JUDUL: Ganti judul sesi jika ini pesan pertama
+        if len(msgs) == 0:
+            new_title = prompt[:25] + "..." if len(prompt) > 25 else prompt
+            c.execute("UPDATE sessions SET title = ? WHERE id = ?", (new_title, st.session_state.current_session_id))
+        
         c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)", (st.session_state.current_session_id, prompt))
+        conn.commit()
+        
         instruction = "Kamu Guru Korea. Beri [Korea | Romaji | Indo] untuk tiap kata kunci."
         resp = model.generate_content(f"{instruction}\nSiswa: {prompt}")
+        
         c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", (st.session_state.current_session_id, resp.text))
         conn.commit()
         st.rerun()
 
 elif mode == "Roleplay Percakapan":
-    st.title("🎭 Simulator Percakapan Interaktif")
+    st.title("🎭 Simulator Roleplay")
     st.info("AI akan menjadi lawan bicaramu. Berlatihlah menggunakan tingkatan bahasa yang sesuai!")
 
-    # 1. Pilihan Skenario & Peran
     col1, col2 = st.columns(2)
     with col1:
-        skenario = st.selectbox("Pilih Situasi:", [
-            "Bertemu Guru di Taman", 
-            "Membeli Tiket Konser di Loket", 
-            "Bertemu Teman Lama di Kafe",
-            "Wawancara Kerja di Perusahaan IT",
-            "Tersesat dan Tanya Polisi"
-        ])
+        skenario = st.selectbox("Situasi:", ["Bertemu Guru", "Membeli Tiket", "Kenalan di Kafe", "Wawancara Kerja", "Tersesat"])
     with col2:
-        custom_skenario = st.text_input("Atau buat skenario sendiri:", placeholder="Contoh: Debat dengan kasir supermarket...")
+        custom = st.text_input("Skenario Lain:", placeholder="Contoh: Belanja di pasar...")
 
-    situasi_final = custom_skenario if custom_skenario else skenario
+    situasi_final = custom if custom else skenario
 
-    # 2. Tombol Mulai
-    if st.button("Mulai Percakapan 🎬", use_container_width=True):
+    if st.button("Mulai Roleplay 🎬", use_container_width=True):
         st.session_state.roleplay_active = True
-        # Prompt sistem untuk mengatur identitas AI dan User
-        system_prompt = (
-            f"Skenario: {situasi_final}. "
-            "Aturan: Kamu (AI) adalah ORANG KEDUA dalam cerita ini. Pengguna adalah ORANG PERTAMA (Subjek 'Aku'). "
-            "Tugasmu: Bertindaklah sepenuhnya sebagai karakter lawan bicara dalam skenario tersebut. "
-            "Gunakan tingkatan bahasa (formal/sopan/banmal) yang logis untuk karaktermu terhadap pengguna. "
-            "Berikan respon dalam Bahasa Korea, lalu di bawahnya berikan format [Hangul | Romaji | Arti] "
-            "dan tambahkan instruksi pendek dalam kurung ( ) tentang apa yang harus dilakukan pengguna selanjutnya."
-        )
+        sys_p = (f"Skenario: {situasi_final}. Kamu lawan bicara (Orang Kedua). Gunakan [Hangul | Romaji | Arti].")
+        st.session_state.rp_messages = [{"role": "system", "content": sys_p}]
         
-        # Inisialisasi pesan
-        st.session_state.rp_messages = [{"role": "system", "content": system_prompt}]
-        
-        # AI Memulai Duluan
         with st.spinner("Karakter sedang bersiap..."):
-            first_resp = model.generate_content(system_prompt + " Mulailah percakapan sebagai karaktermu.")
-            st.session_state.rp_messages.append({"role": "assistant", "content": first_resp.text})
+            res = model.generate_content(sys_p + " Mulailah percakapan!")
+            st.session_state.rp_messages.append({"role": "assistant", "content": res.text})
 
-    # 3. Area Chat Roleplay
-    if "roleplay_active" in st.session_state:
-        st.write("---")
-        # Menampilkan percakapan yang sedang berlangsung
-        for msg in st.session_state.rp_messages:
-            if msg["role"] != "system":
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-                    
-                    # Fitur Audio Otomatis untuk Respon AI
-                    if msg["role"] == "assistant":
-                        match = re.search(r"\[(.*?)\|", msg["content"])
-                        if match:
-                            ko_text = match.group(1).strip()
-                            if st.button(f"🔊 Dengar Suara Karakter", key=f"rp_aud_{hash(msg['content'])}"):
-                                audio = play_audio(ko_text)
-                                if audio: st.audio(audio, format="audio/mp3", autoplay=True)
+    if st.session_state.get("roleplay_active"):
+        for m in st.session_state.rp_messages:
+            if m["role"] != "system":
+                with st.chat_message(m["role"]):
+                    st.markdown(m["content"])
+                    if m["role"] == "assistant":
+                        match = re.search(r"\[(.*?)\|", m["content"])
+                        if match and st.button("🔊 Play", key=f"rp_aud_{hash(m['content'])}"):
+                            audio = play_audio(match.group(1))
+                            if audio: st.audio(audio, format="audio/mp3", autoplay=True)
 
-        # Input Balasan dari Pengguna
-        if user_input := st.chat_input("Balas karakter ini..."):
-            st.session_state.rp_messages.append({"role": "user", "content": user_input})
-            
-            with st.spinner("Karakter sedang mengetik..."):
-                # Kirim seluruh riwayat agar AI ingat konteks
-                full_history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.rp_messages])
-                response = model.generate_content(full_history)
-                st.session_state.rp_messages.append({"role": "assistant", "content": response.text})
-                st.rerun()
+        if rp_in := st.chat_input("Balas karakter ini..."):
+            st.session_state.rp_messages.append({"role": "user", "content": rp_in})
+            full_h = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.rp_messages])
+            response = model.generate_content(full_h)
+            st.session_state.rp_messages.append({"role": "assistant", "content": response.text})
+            st.rerun()
 
     if st.button("Reset Roleplay 🔄"):
         if "roleplay_active" in st.session_state:
@@ -221,14 +201,12 @@ elif mode == "Kuis Berjenjang":
 
     if st.session_state.q_done:
         st.success(f"### Level {st.session_state.q_level} Selesai! Skor: {st.session_state.q_score}/100")
-        if st.button("Lanjut ke Level Berikutnya" if levels.index(st.session_state.q_level) < 3 else "Reset Kuis"):
-            idx = levels.index(st.session_state.q_level)
-            st.session_state.q_level = levels[(idx+1)%4]; st.session_state.q_step = 1; st.session_state.q_score = 0; st.session_state.q_done = False
+        if st.button("Ulang / Lanjut"):
+            st.session_state.q_step = 1; st.session_state.q_score = 0; st.session_state.q_done = False
             if 'curr_q' in st.session_state: del st.session_state.curr_q
             st.rerun()
         st.stop()
 
-    # Ambil Bahan History
     c = conn.cursor()
     c.execute("SELECT content FROM messages WHERE session_id = ? AND role='assistant' AND content LIKE '%|%'", (st.session_state.current_session_id,))
     history_raw = c.fetchall()
@@ -243,14 +221,14 @@ elif mode == "Kuis Berjenjang":
                 data = json.loads(re.search(r'\{.*\}', res.text, re.DOTALL).group())
                 opts = data['o'] + [data['a']]; random.shuffle(opts)
                 st.session_state.curr_q = {"q":data['q'], "r":data['r'], "a":data['a'], "opts":opts}
-            except: st.error("Gagal!"); st.stop()
+            except: st.error("Gagal memuat soal!"); st.stop()
 
     st.write(f"**Soal {st.session_state.q_step} / 5**")
     st.progress(st.session_state.q_step / 5)
     q = st.session_state.curr_q
     st.subheader(q['q'])
     st.caption(f"Baca: {q['r']}")
-    ans = st.radio("Pilih:", q['opts'], index=None, key=f"q_{st.session_state.q_step}")
+    ans = st.radio("Pilih jawaban:", q['opts'], index=None, key=f"q_{st.session_state.q_step}")
     if st.button("Kirim Jawaban"):
         if ans == q['a']:
             st.success("Benar!"); st.session_state.q_score += 20
@@ -258,4 +236,3 @@ elif mode == "Kuis Berjenjang":
         if st.session_state.q_step < 5:
             st.session_state.q_step += 1; del st.session_state.curr_q; st.rerun()
         else: st.session_state.q_done = True; st.rerun()
-
