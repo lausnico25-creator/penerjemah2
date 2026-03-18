@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 
 # --- 1. KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Tutor Korea AI Pro", page_icon="🇰🇷", layout="wide")
+st.set_page_config(page_title="KA Tutor Korea Pro", page_icon="🇰🇷", layout="wide")
 
 # --- 2. DATABASE SETUP ---
 def init_db():
@@ -45,7 +45,7 @@ def play_audio(text):
         return fp
     except: return None
 
-# --- 5. SIDEBAR & LOGIKA HISTORY ---
+# --- 5. SIDEBAR & LOGIKA NAVIGASI ---
 with st.sidebar:
     st.title("🇰🇷 Panel Kontrol")
     mode = st.radio("Pilih Mode:", ["Belajar & Tanya", "Roleplay Percakapan", "Kuis Berjenjang", "Konverter Angka"])
@@ -63,12 +63,11 @@ with st.sidebar:
     st.write("### Riwayat Belajar")
     c = conn.cursor()
     c.execute("SELECT id, title FROM sessions ORDER BY id DESC")
-    sessions = c.fetchall()
+    sessions_list = c.fetchall()
     
-    for s_id, s_title in sessions:
+    for s_id, s_title in sessions_list:
         col_chat, col_del = st.columns([4, 1])
         with col_chat:
-            # HISTORY FIX: Memastikan ID sesi tersimpan di session_state
             if st.button(f"📄 {s_title}", key=f"s_{s_id}", use_container_width=True):
                 st.session_state.current_session_id = s_id
                 if 'curr_q' in st.session_state: del st.session_state.curr_q
@@ -80,9 +79,9 @@ with st.sidebar:
                 conn.commit()
                 st.rerun()
 
-# Inisialisasi Session ID default
+# Cek Session ID Aktif
 if "current_session_id" not in st.session_state:
-    if sessions: st.session_state.current_session_id = sessions[0][0]
+    if sessions_list: st.session_state.current_session_id = sessions_list[0][0]
     else:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         c = conn.cursor()
@@ -93,94 +92,121 @@ if "current_session_id" not in st.session_state:
 # --- 6. TAMPILAN UTAMA ---
 
 if mode == "Belajar & Tanya":
-    st.title("🎓 KA Tutor: Mode Belajar")
-    
+    st.title("🎓 Mode Belajar")
     c = conn.cursor()
     c.execute("SELECT id, role, content FROM messages WHERE session_id = ? ORDER BY id ASC", (st.session_state.current_session_id,))
-    current_messages = c.fetchall()
+    msgs = c.fetchall()
 
-    for m_id, role, content in current_messages:
+    for m_id, role, content in msgs:
         with st.chat_message(role):
             st.markdown(content)
-            # AUDIO FIX: Kembali ke format tombol kolom di bawah chat
             if role == "assistant" and "[" in content:
                 variants = re.findall(r"\[(.*?)\]", content)
                 for i, v in enumerate(variants):
                     parts = v.split("|")
                     if len(parts) >= 3:
-                        korea, romaji, indo = parts[0].strip(), parts[1].strip(), parts[2].strip()
-                        col_a, col_b = st.columns([1, 5])
+                        ko, ro, idn = parts[0].strip(), parts[1].strip(), parts[2].strip()
+                        col_a, col_b = st.columns([1, 6])
                         with col_a:
                             if st.button(f"🔊 Play", key=f"aud_{m_id}_{i}"):
-                                audio = play_audio(korea)
+                                audio = play_audio(ko)
                                 if audio: st.audio(audio, format="audio/mp3", autoplay=True)
                         with col_b:
-                            st.caption(f"{korea} ({romaji}) = {indo}")
+                            st.caption(f"**{ko}** ({ro}): {idn}")
 
-    if prompt := st.chat_input("Tanya kata atau kalimat..."):
+    if prompt := st.chat_input("Tanya guru..."):
         st.chat_message("user").markdown(prompt)
         c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)", (st.session_state.current_session_id, prompt))
-        
-        instruction = "Kamu Guru Korea. WAJIB FORMAT: [Korea | Romaji | Indo] untuk kosakata."
-        response = model.generate_content(f"{instruction}\nSiswa: {prompt}")
-        
-        c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", (st.session_state.current_session_id, response.text))
+        instruction = "Kamu Guru Korea. Beri [Korea | Romaji | Indo] untuk tiap kata kunci."
+        resp = model.generate_content(f"{instruction}\nSiswa: {prompt}")
+        c.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", (st.session_state.current_session_id, resp.text))
         conn.commit()
         st.rerun()
 
+elif mode == "Roleplay Percakapan":
+    st.title("🎭 Simulator Roleplay")
+    skenario = st.selectbox("Skenario:", ["Pertemuan Pertama", "Belanja di Pasar", "Memesan Kopi", "Tanya Jalan"])
+    
+    if st.button("Mulai Roleplay 🎬", use_container_width=True):
+        st.session_state.rp_active = True
+        st.session_state.rp_msgs = [{"role": "system", "content": f"Skenario: {skenario}. Kamu lawan bicara (Orang ke-2). Gunakan [Hangul|Romaji|Arti]."}]
+        first = model.generate_content(st.session_state.rp_msgs[0]["content"] + " Mulailah!")
+        st.session_state.rp_msgs.append({"role": "assistant", "content": first.text})
+
+    if st.session_state.get("rp_active"):
+        for m in st.session_state.rp_msgs:
+            if m["role"] != "system":
+                with st.chat_message(m["role"]): st.markdown(m["content"])
+        
+        if rp_in := st.chat_input("Balas..."):
+            st.session_state.rp_msgs.append({"role": "user", "content": rp_in})
+            res = model.generate_content(str(st.session_state.rp_msgs))
+            st.session_state.rp_msgs.append({"role": "assistant", "content": res.text})
+            st.rerun()
+
 elif mode == "Kuis Berjenjang":
-    # State Kuis
+    if 'q_level' not in st.session_state: st.session_state.q_level = "Mudah"
     if 'q_step' not in st.session_state: st.session_state.q_step = 1
     if 'q_score' not in st.session_state: st.session_state.q_score = 0
+    if 'q_done' not in st.session_state: st.session_state.q_done = False
+    levels = ["Mudah", "Sedang", "Susah", "Profesional"]
 
-    st.title("🏆 Kuis Berbasis History")
+    c1, c2, c3 = st.columns([3, 2, 1])
+    with c1: st.title("🏆 Kuis Pro")
+    with c2: 
+        lv = st.selectbox("Level:", levels, index=levels.index(st.session_state.q_level))
+        if lv != st.session_state.q_level:
+            st.session_state.q_level = lv; st.session_state.q_step = 1; st.session_state.q_score = 0
+            if 'curr_q' in st.session_state: del st.session_state.curr_q
+            st.rerun()
+    with c3:
+        if st.button("Reset 🔄"):
+            st.session_state.q_level="Mudah"; st.session_state.q_score=0; st.session_state.q_step=1; st.session_state.q_done=False
+            if 'curr_q' in st.session_state: del st.session_state.curr_q
+            st.rerun()
 
-    # KUIS FIX: Mengambil data dari session_id yang sedang aktif SAJA
+    if st.session_state.q_done:
+        st.success(f"### Level {st.session_state.q_level} Selesai! Skor: {st.session_state.q_score}/100")
+        if st.button("Lanjut ke Level Berikutnya" if levels.index(st.session_state.q_level) < 3 else "Reset Kuis"):
+            idx = levels.index(st.session_state.q_level)
+            st.session_state.q_level = levels[(idx+1)%4]; st.session_state.q_step = 1; st.session_state.q_score = 0; st.session_state.q_done = False
+            if 'curr_q' in st.session_state: del st.session_state.curr_q
+            st.rerun()
+        st.stop()
+
+    # Ambil Bahan History
     c = conn.cursor()
     c.execute("SELECT content FROM messages WHERE session_id = ? AND role='assistant' AND content LIKE '%|%'", (st.session_state.current_session_id,))
     history_raw = c.fetchall()
-    context_bahan = "\n".join([r[0] for r in history_raw])
-
-    if not history_raw:
-        st.warning("History di sesi ini masih kosong. Silakan tanya jawab dulu di mode Belajar agar kuis tidak random!")
-        st.stop()
+    context = "\n".join([r[0] for r in history_raw])
 
     if 'curr_q' not in st.session_state:
-        with st.spinner("Merangkum materi history..."):
-            prompt_q = (
-                f"Berikut adalah materi yang dipelajari siswa: {context_bahan}\n"
-                "Buatlah 1 soal kuis pilihan ganda HANYA dari materi di atas. "
-                "Format JSON: {\"q\": \"soal\", \"r\": \"baca\", \"a\": \"benar\", \"o\": [\"salah1\", \"salah2\", \"salah3\"]}"
-            )
-            res = model.generate_content(prompt_q)
-            data = json.loads(re.search(r'\{.*\}', res.text, re.DOTALL).group())
-            opts = data['o'] + [data['a']]; random.shuffle(opts)
-            st.session_state.curr_q = {"q": data['q'], "r": data['r'], "a": data['a'], "opts": opts}
+        with st.spinner("Menyiapkan soal..."):
+            src = f"Gunakan riwayat ini: {context}" if history_raw else "Gunakan kosakata umum"
+            p_q = f"{src}\nBuat 1 soal kuis Korea {st.session_state.q_level}. Format JSON: {{\"q\": \"soal\", \"r\": \"baca\", \"a\": \"benar\", \"o\": [\"salah1\", \"salah2\", \"salah3\"]}}"
+            try:
+                res = model.generate_content(p_q)
+                data = json.loads(re.search(r'\{.*\}', res.text, re.DOTALL).group())
+                opts = data['o'] + [data['a']]; random.shuffle(opts)
+                st.session_state.curr_q = {"q":data['q'], "r":data['r'], "a":data['a'], "opts":opts}
+            except: st.error("Gagal!"); st.stop()
 
+    st.write(f"**Soal {st.session_state.q_step} / 5**")
+    st.progress(st.session_state.q_step / 5)
     q = st.session_state.curr_q
     st.subheader(q['q'])
-    ans = st.radio("Pilih jawaban:", q['opts'], index=None, key=f"quiz_{st.session_state.q_step}")
-
-    if st.button("Kirim Jawaban", use_container_width=True):
+    st.caption(f"Baca: {q['r']}")
+    ans = st.radio("Pilih:", q['opts'], index=None, key=f"q_{st.session_state.q_step}")
+    if st.button("Kirim Jawaban"):
         if ans == q['a']:
             st.success("Benar!"); st.session_state.q_score += 20
         else: st.error(f"Salah! Jawaban: {q['a']}")
-        
         if st.session_state.q_step < 5:
             st.session_state.q_step += 1; del st.session_state.curr_q; st.rerun()
-        else:
-            st.write(f"Selesai! Skor: {st.session_state.q_score}")
-            if st.button("Ulang Kuis"):
-                st.session_state.q_step = 1; st.session_state.q_score = 0; del st.session_state.curr_q; st.rerun()
-
-elif mode == "Roleplay Percakapan":
-    st.title("🎭 Simulator Roleplay")
-    # (Gunakan logika Roleplay dari kode sebelumnya, pastikan indentasi benar)
-    st.write("Mode ini siap digunakan.")
+        else: st.session_state.q_done = True; st.rerun()
 
 elif mode == "Konverter Angka":
     st.title("🔢 Konverter Angka")
-    num = st.number_input("Input Angka:", min_value=1)
+    num = st.number_input("Angka:", min_value=1)
     if st.button("Konversi"):
-        res = model.generate_content(f"Angka {num} dalam Sino dan Native Korea.")
-        st.write(res.text)
+        st.write(model.generate_content(f"Angka {num} Sino & Native Korea.").text)
