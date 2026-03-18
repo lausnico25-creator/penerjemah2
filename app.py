@@ -124,24 +124,78 @@ if mode == "Belajar & Tanya":
         st.rerun()
 
 elif mode == "Roleplay Percakapan":
-    st.title("🎭 Simulator Roleplay")
-    skenario = st.selectbox("Skenario:", ["Pertemuan Pertama", "Belanja di Pasar", "Memesan Kopi", "Tanya Jalan"])
-    
-    if st.button("Mulai Roleplay 🎬", use_container_width=True):
-        st.session_state.rp_active = True
-        st.session_state.rp_msgs = [{"role": "system", "content": f"Skenario: {skenario}. Kamu lawan bicara (Orang ke-2). Gunakan [Hangul|Romaji|Arti]."}]
-        first = model.generate_content(st.session_state.rp_msgs[0]["content"] + " Mulailah!")
-        st.session_state.rp_msgs.append({"role": "assistant", "content": first.text})
+    st.title("🎭 Simulator Percakapan Interaktif")
+    st.info("AI akan menjadi lawan bicaramu. Berlatihlah menggunakan tingkatan bahasa yang sesuai!")
 
-    if st.session_state.get("rp_active"):
-        for m in st.session_state.rp_msgs:
-            if m["role"] != "system":
-                with st.chat_message(m["role"]): st.markdown(m["content"])
+    # 1. Pilihan Skenario & Peran
+    col1, col2 = st.columns(2)
+    with col1:
+        skenario = st.selectbox("Pilih Situasi:", [
+            "Bertemu Guru di Taman", 
+            "Membeli Tiket Konser di Loket", 
+            "Bertemu Teman Lama di Kafe",
+            "Wawancara Kerja di Perusahaan IT",
+            "Tersesat dan Tanya Polisi"
+        ])
+    with col2:
+        custom_skenario = st.text_input("Atau buat skenario sendiri:", placeholder="Contoh: Debat dengan kasir supermarket...")
+
+    situasi_final = custom_skenario if custom_skenario else skenario
+
+    # 2. Tombol Mulai
+    if st.button("Mulai Percakapan 🎬", use_container_width=True):
+        st.session_state.roleplay_active = True
+        # Prompt sistem untuk mengatur identitas AI dan User
+        system_prompt = (
+            f"Skenario: {situasi_final}. "
+            "Aturan: Kamu (AI) adalah ORANG KEDUA dalam cerita ini. Pengguna adalah ORANG PERTAMA (Subjek 'Aku'). "
+            "Tugasmu: Bertindaklah sepenuhnya sebagai karakter lawan bicara dalam skenario tersebut. "
+            "Gunakan tingkatan bahasa (formal/sopan/banmal) yang logis untuk karaktermu terhadap pengguna. "
+            "Berikan respon dalam Bahasa Korea, lalu di bawahnya berikan format [Hangul | Romaji | Arti] "
+            "dan tambahkan instruksi pendek dalam kurung ( ) tentang apa yang harus dilakukan pengguna selanjutnya."
+        )
         
-        if rp_in := st.chat_input("Balas..."):
-            st.session_state.rp_msgs.append({"role": "user", "content": rp_in})
-            res = model.generate_content(str(st.session_state.rp_msgs))
-            st.session_state.rp_msgs.append({"role": "assistant", "content": res.text})
+        # Inisialisasi pesan
+        st.session_state.rp_messages = [{"role": "system", "content": system_prompt}]
+        
+        # AI Memulai Duluan
+        with st.spinner("Karakter sedang bersiap..."):
+            first_resp = model.generate_content(system_prompt + " Mulailah percakapan sebagai karaktermu.")
+            st.session_state.rp_messages.append({"role": "assistant", "content": first_resp.text})
+
+    # 3. Area Chat Roleplay
+    if "roleplay_active" in st.session_state:
+        st.write("---")
+        # Menampilkan percakapan yang sedang berlangsung
+        for msg in st.session_state.rp_messages:
+            if msg["role"] != "system":
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+                    
+                    # Fitur Audio Otomatis untuk Respon AI
+                    if msg["role"] == "assistant":
+                        match = re.search(r"\[(.*?)\|", msg["content"])
+                        if match:
+                            ko_text = match.group(1).strip()
+                            if st.button(f"🔊 Dengar Suara Karakter", key=f"rp_aud_{hash(msg['content'])}"):
+                                audio = play_audio(ko_text)
+                                if audio: st.audio(audio, format="audio/mp3", autoplay=True)
+
+        # Input Balasan dari Pengguna
+        if user_input := st.chat_input("Balas karakter ini..."):
+            st.session_state.rp_messages.append({"role": "user", "content": user_input})
+            
+            with st.spinner("Karakter sedang mengetik..."):
+                # Kirim seluruh riwayat agar AI ingat konteks
+                full_history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.rp_messages])
+                response = model.generate_content(full_history)
+                st.session_state.rp_messages.append({"role": "assistant", "content": response.text})
+                st.rerun()
+
+    if st.button("Reset Roleplay 🔄"):
+        if "roleplay_active" in st.session_state:
+            del st.session_state.roleplay_active
+            del st.session_state.rp_messages
             st.rerun()
 
 elif mode == "Kuis Berjenjang":
