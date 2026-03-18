@@ -5,6 +5,7 @@ import sqlite3
 import io
 import re
 import random
+import json
 from datetime import datetime
 
 # --- 1. KONFIGURASI HALAMAN ---
