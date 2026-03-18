@@ -150,15 +150,46 @@ elif mode == "Roleplay Percakapan":
 elif mode == "Kuis Kosakata":
     st.title("🧠 Kuis Cerdas Tangkas")
     quiz_data = get_quiz_data()
+    
     if len(quiz_data) < 3:
-        st.warning("Belum cukup data untuk kuis. Silakan mengobrol dulu di mode 'Belajar'!")
+        st.warning("Belum cukup data. Ngobrol dulu di mode 'Belajar' agar AI punya bahan kuis!")
     else:
-        q = random.choice(quiz_data)
-        st.subheader(f"Apa arti dari: **{q[0]}** ({q[1]})?")
-        ans = st.radio("Pilih jawaban:", [q[2], "Salah satu arti lain", "Tidak tahu"])
-        if st.button("Cek Jawaban"):
-            if ans == q[2]: st.success("Benar! Hebat!")
-            else: st.error(f"Salah. Jawaban yang benar adalah {q[2]}")
+        # Gunakan session_state agar soal tidak berubah saat klik tombol
+        if 'current_quiz' not in st.session_state:
+            q = random.choice(quiz_data)
+            
+            # Minta Gemini bikin pilihan jebakan yang mirip
+            distractor_gen = model.generate_content(
+                f"Berikan 3 jawaban salah yang mirip/terkait dalam Bahasa Indonesia untuk kata Korea '{q[0]}' yang artinya '{q[2]}'. "
+                "Hanya berikan 3 kata/frasa dipisahkan koma, tanpa penjelasan."
+            )
+            distractors = distractor_gen.text.strip().split(",")
+            
+            options = [q[2]] + [d.strip() for d in distractors]
+            random.shuffle(options)
+            
+            st.session_state.current_quiz = {"q": q, "options": options}
+
+        quiz = st.session_state.current_quiz
+        st.subheader(f"Apa arti dari: **{quiz['q'][0]}**?")
+        st.caption(f"Cara baca: {quiz['q'][1]}")
+        
+        ans = st.radio("Pilih jawaban yang paling tepat:", quiz['options'], index=None)
+        
+        col_cek, col_next = st.columns(2)
+        with col_cek:
+            if st.button("Cek Jawaban", use_container_width=True):
+                if ans == quiz['q'][2]:
+                    st.success(f"✅ Benar! {quiz['q'][0]} memang berarti {quiz['q'][2]}.")
+                    st.balloons()
+                else:
+                    st.error(f"❌ Salah! Jawaban yang benar adalah: {quiz['q'][2]}")
+        
+        with col_next:
+            if st.button("Soal Selanjutnya ➡️", use_container_width=True):
+                del st.session_state.current_quiz
+                st.rerun()
+
 
 elif mode == "Konverter Angka":
     st.title("🔢 Konverter Angka Korea")
