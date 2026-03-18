@@ -215,118 +215,129 @@ elif mode == "Roleplay Percakapan":
 
 
 elif mode == "Kuis Kosakata":
-    st.title("🏆 Kuis Bahasa Korea Berjenjang")
+    # --- 1. INISIALISASI STATE ---
+    if 'quiz_level' not in st.session_state: st.session_state.quiz_level = "Mudah"
+    if 'quiz_score' not in st.session_state: st.session_state.quiz_score = 0
+    if 'quiz_step' not in st.session_state: st.session_state.quiz_step = 1
+    if 'quiz_finished' not in st.session_state: st.session_state.quiz_finished = False
     
-    # --- Inisialisasi State Kuis ---
-    if 'quiz_level' not in st.session_state:
-        st.session_state.quiz_level = 1
-    if 'quiz_score' not in st.session_state:
-        st.session_state.quiz_score = 0
-    if 'quiz_step' not in st.session_state:
-        st.session_state.quiz_step = 1
-    if 'max_steps' not in st.session_state:
-        st.session_state.max_steps = 5  # 5 soal per level
-    if 'quiz_finished' not in st.session_state:
-        st.session_state.quiz_finished = False
+    levels = ["Mudah", "Sedang", "Susah", "Profesional"]
+    max_soal = 5
 
-    # Tampilan Header Statistik
-    col_stat1, col_stat2, col_stat3 = st.columns(3)
-    col_stat1.metric("Level", st.session_state.quiz_level)
-    col_stat2.metric("Skor", st.session_state.quiz_score)
-    col_stat3.metric("Soal", f"{st.session_state.quiz_step}/{st.session_state.max_steps}")
+    # --- 2. HEADER & NAVIGATION ---
+    col_tit, col_lev, col_res = st.columns([3, 2, 1])
+    with col_tit:
+        st.title("🏆 Kuis Berjenjang")
+    with col_lev:
+        # Pilihan Level Manual
+        new_level = st.selectbox("Pilih Level:", levels, index=levels.index(st.session_state.quiz_level))
+        if new_level != st.session_state.quiz_level:
+            st.session_state.quiz_level = new_level
+            st.session_state.quiz_step = 1
+            st.session_state.quiz_score = 0
+            if 'current_q' in st.session_state: del st.session_state.current_q
+            st.rerun()
+    with col_res:
+        if st.button("Reset 🔄", use_container_width=True, help="Ulang semua dari awal"):
+            st.session_state.quiz_level = "Mudah"
+            st.session_state.quiz_score = 0
+            st.session_state.quiz_step = 1
+            st.session_state.quiz_finished = False
+            if 'current_q' in st.session_state: del st.session_state.current_q
+            st.rerun()
 
-    # --- LOGIKA SELESAI LEVEL ---
+    st.write("---")
+
+    # --- 3. LOGIKA SELESAI LEVEL ---
     if st.session_state.quiz_finished:
         st.balloons()
         st.success(f"### 🎉 Level {st.session_state.quiz_level} Selesai!")
-        st.write(f"Skor Akhir Kamu: **{st.session_state.quiz_score}**")
+        st.metric("Skor Akhir", f"{st.session_state.quiz_score} / 100")
         
-        col_res1, col_res2 = st.columns(2)
-        with col_res1:
-            if st.button("Lanjut ke Level Selanjutnya 🚀", use_container_width=True):
-                st.session_state.quiz_level += 1
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Ulang Level Ini 🔄", use_container_width=True):
                 st.session_state.quiz_step = 1
-                st.session_state.quiz_finished = False
-                if 'current_q' in st.session_state: del st.session_state.current_q
-                st.rerun()
-        with col_res2:
-            if st.button("Ulang / Reset Kuis 🔄", use_container_width=True):
-                st.session_state.quiz_level = 1
                 st.session_state.quiz_score = 0
-                st.session_state.quiz_step = 1
                 st.session_state.quiz_finished = False
                 if 'current_q' in st.session_state: del st.session_state.current_q
                 st.rerun()
+        with c2:
+            current_idx = levels.index(st.session_state.quiz_level)
+            if current_idx < len(levels) - 1:
+                if st.button(f"Lanjut ke Level {levels[current_idx+1]} ➡️", use_container_width=True):
+                    st.session_state.quiz_level = levels[current_idx+1]
+                    st.session_state.quiz_step = 1
+                    st.session_state.quiz_score = 0
+                    st.session_state.quiz_finished = False
+                    if 'current_q' in st.session_state: del st.session_state.current_q
+                    st.rerun()
+            else:
+                st.info("Selamat! Kamu sudah menyelesaikan tingkat Profesional. Gunakan tombol Reset untuk mengulang dari awal.")
         st.stop()
 
-    # --- LOGIKA GENERASI SOAL ---
+    # --- 4. GENERASI SOAL VIA AI ---
     if 'current_q' not in st.session_state:
-        with st.spinner(f"Menyiapkan soal Level {st.session_state.quiz_level}..."):
-            # Tingkat kesulitan berdasarkan level
-            difficulty = {
-                1: "Kata dasar sederhana (kata benda/kerja tunggal)",
-                2: "Frasa pendek dan angka",
-                3: "Kalimat percakapan sehari-hari",
-                4: "Tata bahasa (grammar) dan partikel",
-                5: "Idiom dan kalimat kompleks"
-            }.get(st.session_state.quiz_level, "Kalimat sangat kompleks")
-
-            prompt_kuis = (
-                f"Buatlah 1 soal kuis Bahasa Korea level {st.session_state.quiz_level} ({difficulty}).\n"
-                "Berikan jawaban benar dan 3 jawaban salah (distraktor) yang masuk akal.\n"
-                "Format JSON murni: {\"soal\": \"...\", \"baca\": \"...\", \"benar\": \"...\", \"salah\": [\"...\", \"...\", \"...\"]}"
+        with st.spinner(f"Menyusun soal {st.session_state.quiz_level}..."):
+            diff_desc = {
+                "Mudah": "Kosakata dasar (benda/warna/angka)",
+                "Sedang": "Kata kerja dan kalimat pendek sehari-hari",
+                "Susah": "Tata bahasa, partikel, dan kalimat formal",
+                "Profesional": "Idiom, pepatah, atau teks berita Korea"
+            }
+            
+            prompt = (
+                f"Buat 1 soal kuis Korea level {st.session_state.quiz_level} ({diff_desc[st.session_state.quiz_level]}).\n"
+                "Berikan 1 jawaban benar dan 3 jawaban salah.\n"
+                "Format JSON: {\"q\": \"soal\", \"r\": \"cara baca\", \"a\": \"jawaban benar\", \"o\": [\"salah1\", \"salah2\", \"salah3\"]}"
             )
             
             try:
-                res = model.generate_content(prompt_kuis)
-                # Membersihkan output json dari markdown jika ada
-                clean_json = re.search(r'\{.*\}', res.text, re.DOTALL).group()
-                data = eval(clean_json) # Mengubah string ke dict
+                res = model.generate_content(prompt)
+                data = eval(re.search(r'\{.*\}', res.text, re.DOTALL).group())
                 
-                options = [data['benar']] + data['salah']
-                random.shuffle(options)
+                all_options = data['o'] + [data['a']]
+                random.shuffle(all_options)
                 
                 st.session_state.current_q = {
-                    "question": data['soal'],
-                    "reading": data['baca'],
-                    "answer": data['benar'],
-                    "options": options
+                    "question": data['q'],
+                    "reading": data['r'],
+                    "answer": data['a'],
+                    "options": all_options
                 }
             except:
-                st.error("Gagal memuat soal. Coba klik tombol di bawah.")
-                if st.button("Coba Lagi"): st.rerun()
+                st.error("Koneksi sibuk, coba klik tombol di bawah.")
+                if st.button("Refresh Soal"): st.rerun()
                 st.stop()
 
-    # --- TAMPILAN SOAL ---
+    # --- 5. TAMPILAN SOAL ---
+    st.write(f"**Soal {st.session_state.quiz_step} / {max_soal}**")
+    progress = st.session_state.quiz_step / max_soal
+    st.progress(progress)
+    
     q = st.session_state.current_q
-    st.write(f"### {q['question']}")
+    st.subheader(q['question'])
     st.caption(f"Cara baca: {q['reading']}")
     
-    choice = st.radio("Pilih jawaban:", q['options'], index=None, key=f"q_{st.session_state.quiz_step}")
+    choice = st.radio("Pilih arti yang tepat:", q['options'], index=None)
 
-    if st.button("Kirim Jawaban", use_container_width=True):
-        if choice == q['answer']:
-            st.success("✨ Benar! +20 Poin")
-            st.session_state.quiz_score += 20
+    if st.button("Kirim Jawaban 📩", use_container_width=True):
+        if not choice:
+            st.warning("Pilih dulu jawabannya!")
         else:
-            st.error(f"❌ Salah! Jawaban yang benar adalah: {q['answer']}")
-        
-        # Pindah ke soal berikutnya atau selesai
-        if st.session_state.quiz_step < st.session_state.max_steps:
-            st.session_state.quiz_step += 1
-            del st.session_state.current_q
-            st.rerun()
-        else:
-            st.session_state.quiz_finished = True
-            st.rerun()
-
-    if st.button("Reset Seluruh Kuis", type="secondary"):
-        st.session_state.quiz_level = 1
-        st.session_state.quiz_score = 0
-        st.session_state.quiz_step = 1
-        st.session_state.quiz_finished = False
-        if 'current_q' in st.session_state: del st.session_state.current_q
-        st.rerun()
+            if choice == q['answer']:
+                st.success("Benar! +20 Poin")
+                st.session_state.quiz_score += 20
+            else:
+                st.error(f"Salah! Jawaban yang benar adalah: {q['answer']}")
+            
+            if st.session_state.quiz_step < max_soal:
+                st.session_state.quiz_step += 1
+                del st.session_state.current_q
+                st.rerun()
+            else:
+                st.session_state.quiz_finished = True
+                st.rerun()
 
 elif mode == "Konverter Angka":
     st.title("🔢 Konverter Angka Korea")
