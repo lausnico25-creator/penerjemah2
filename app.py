@@ -242,6 +242,131 @@ elif mode == "Roleplay Percakapan":
                 st.error(f"Gagal memproses soal: {e}")
                 st.stop() # Hapus ini jika ingin tetap munculkan tombol refresh
 
+elif mode == "Kuis Berjenjang":
+    # --- 1. INISIALISASI STATE (Agar tidak error saat refresh) ---
+    if 'q_level' not in st.session_state: st.session_state.q_level = "Mudah"
+    if 'q_score' not in st.session_state: st.session_state.q_score = 0
+    if 'q_step' not in st.session_state: st.session_state.q_step = 1
+    if 'q_done' not in st.session_state: st.session_state.q_done = False
+    
+    levels = ["Mudah", "Sedang", "Susah", "Profesional"]
+
+    # --- 2. HEADER & NAVIGASI (Atas Kanan) ---
+    c1, c2, c3 = st.columns([3, 2, 1])
+    with c1:
+        st.title("🏆 Kuis Pintar")
+    with c2: 
+        lv = st.selectbox("Pilih Level:", levels, index=levels.index(st.session_state.q_level))
+        if lv != st.session_state.q_level:
+            st.session_state.q_level = lv; st.session_state.q_step = 1; st.session_state.q_score = 0
+            if 'curr_q' in st.session_state: del st.session_state.curr_q
+            st.rerun()
+    with c3:
+        if st.button("Reset 🔄", use_container_width=True):
+            st.session_state.q_level = "Mudah"; st.session_state.q_score = 0; st.session_state.q_step = 1; st.session_state.q_done = False
+            if 'curr_q' in st.session_state: del st.session_state.curr_q
+            st.rerun()
+
+    st.write("---")
+
+    # --- 3. TAMPILAN SELESAI LEVEL ---
+    if st.session_state.q_done:
+        st.balloons()
+        st.success(f"### 🎉 Level {st.session_state.q_level} Selesai!")
+        st.metric("Skor Akhir", f"{st.session_state.q_score} / 100")
+        
+        col_end1, col_end2 = st.columns(2)
+        with col_end1:
+            if st.button("Ulang Level Ini 🔄", use_container_width=True):
+                st.session_state.q_step = 1; st.session_state.q_score = 0; st.session_state.q_done = False
+                if 'curr_q' in st.session_state: del st.session_state.curr_q
+                st.rerun()
+        with col_end2:
+            idx = levels.index(st.session_state.q_level)
+            if idx < len(levels) - 1:
+                if st.button(f"Lanjut ke Level {levels[idx+1]} ➡️", use_container_width=True):
+                    st.session_state.q_level = levels[idx+1]; st.session_state.q_step = 1; st.session_state.q_score = 0; st.session_state.q_done = False
+                    if 'curr_q' in st.session_state: del st.session_state.curr_q
+                    st.rerun()
+            else:
+                st.info("Hebat! Kamu sudah mencapai level tertinggi.")
+        st.stop()
+
+    # --- 4. LOGIKA PENGAMBILAN BAHAN (History vs General) ---
+    c = conn.cursor()
+    # Mencari pesan asisten yang berisi format materi [ | | ]
+    c.execute("SELECT content FROM messages WHERE role='assistant' AND content LIKE '%|%' ORDER BY id DESC LIMIT 10")
+    history_raw = c.fetchall()
+    context_bahan = "\n".join([r[0] for r in history_raw])
+
+    # --- 5. GENERATE SOAL (JSON Safe) ---
+    if 'curr_q' not in st.session_state:
+        with st.spinner("Sedang meracik soal untukmu..."):
+            # Jika ada history, gunakan sebagai referensi utama
+            if len(history_raw) >= 1:
+                source_instr = f"Gunakan riwayat pelajaran ini sebagai referensi utama: {context_bahan}"
+                mode_info = "💡 Soal dibuat berdasarkan riwayat chatmu."
+            else:
+                source_instr = "Buatlah soal kosakata Korea umum yang berguna."
+                mode_info = "🌐 Belum ada riwayat chat, menampilkan soal umum."
+
+            st.session_state.q_mode_info = mode_info # Simpan info mode
+
+            prompt = (
+                f"{source_instr}\n\n"
+                f"Buatlah 1 soal kuis pilihan ganda Level {st.session_state.q_level}.\n"
+                "Format JSON MURNI: {\"q\": \"pertanyaan\", \"r\": \"cara baca\", \"a\": \"jawaban benar\", \"o\": [\"salah1\", \"salah2\", \"salah3\"]}"
+            )
+            
+            try:
+                res = model.generate_content(prompt)
+                raw_json = re.search(r'\{.*\}', res.text, re.DOTALL).group()
+                data = json.loads(raw_json)
+                
+                all_opts = data['o'] + [data['a']]
+                random.shuffle(all_opts)
+                
+                st.session_state.curr_q = {
+                    "question": data['q'],
+                    "reading": data['r'],
+                    "answer": data['a'],
+                    "options": all_opts
+                }
+            except:
+                st.error("Gagal memuat soal. Pastikan koneksi stabil.")
+                if st.button("Refresh Soal"): st.rerun()
+                st.stop()
+
+    # --- 6. TAMPILAN PERTANYAAN ---
+    st.info(st.session_state.q_mode_info) # Tampilkan info sumber soal
+    st.write(f"**Soal {st.session_state.q_step} / 5**")
+    st.progress(st.session_state.q_step / 5)
+    
+    q_data = st.session_state.curr_q
+    st.subheader(q_data['question'])
+    st.caption(f"Cara baca: {q_data['reading']}")
+    
+    pilihan = st.radio("Pilih jawaban yang paling tepat:", q_data['options'], index=None)
+
+    if st.button("Kirim Jawaban", use_container_width=True):
+        if not pilihan:
+            st.warning("Pilih salah satu jawaban dulu ya!")
+        else:
+            if pilihan == q_data['answer']:
+                st.success("✨ Benar! +20 Poin")
+                st.session_state.q_score += 20
+            else:
+                st.error(f"❌ Salah. Jawaban yang benar adalah: {q_data['answer']}")
+            
+            # Berpindah soal atau selesai
+            if st.session_state.q_step < 5:
+                st.session_state.q_step += 1
+                del st.session_state.curr_q
+                st.rerun()
+            else:
+                st.session_state.q_done = True
+                st.rerun()
+
 elif mode == "Konverter Angka":
     st.title("🔢 Konverter Angka Korea")
     num_input = st.number_input("Masukkan Angka:", min_value=1, max_value=1000000)
