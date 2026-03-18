@@ -214,8 +214,8 @@ elif mode == "Roleplay Percakapan":
             st.rerun()
 
 
-elif mode == "Kuis Kosakata":
-    # Inisialisasi State
+elif mode == "Kuis":
+    # --- 1. INISIALISASI STATE ---
     if 'q_level' not in st.session_state: st.session_state.q_level = "Mudah"
     if 'q_score' not in st.session_state: st.session_state.q_score = 0
     if 'q_step' not in st.session_state: st.session_state.q_step = 1
@@ -223,9 +223,9 @@ elif mode == "Kuis Kosakata":
     
     levels = ["Mudah", "Sedang", "Susah", "Profesional"]
 
-    # Header Kanan Atas
+    # --- 2. HEADER & NAVIGASI ---
     c1, c2, c3 = st.columns([3, 2, 1])
-    c1.title("🏆 Kuis Pro")
+    c1.title("🏆 Kuis dari Riwayat")
     with c2: 
         lv = st.selectbox("Level:", levels, index=levels.index(st.session_state.q_level))
         if lv != st.session_state.q_level:
@@ -248,35 +248,63 @@ elif mode == "Kuis Kosakata":
             st.rerun()
         st.stop()
 
-    # Generate Soal
+    # --- 3. AMBIL RIWAYAT CHAT UNTUK BAHAN SOAL ---
+    c = conn.cursor()
+    # Ambil 10 pesan terakhir dari asisten yang mengandung format [Korea|Romaji|Indo]
+    c.execute("SELECT content FROM messages WHERE role='assistant' AND content LIKE '%[%|%|%]%' ORDER BY id DESC LIMIT 15")
+    history_data = c.fetchall()
+    context_bahan = "\n".join([row[0] for row in history_data])
+
+    if len(history_data) < 2:
+        st.warning("⚠️ Riwayat chat kamu belum cukup. Silakan mengobrol dulu di mode 'Belajar' agar AI punya bahan untuk kuis!")
+        st.stop()
+
+    # --- 4. GENERATE SOAL BERDASARKAN RIWAYAT ---
     if 'curr_q' not in st.session_state:
-        with st.spinner("Menghasilkan soal..."):
-            p = f"Buat 1 soal kuis Korea level {st.session_state.q_level}. Format JSON MURNI: {{\"q\": \"soal\", \"r\": \"cara baca\", \"a\": \"jawaban benar\", \"o\": [\"salah1\", \"salah2\", \"salah3\"]}}"
-            res = model.generate_content(p)
+        with st.spinner("Menyusun soal dari materi kamu..."):
+            # Prompt instruksi agar AI HANYA mengambil dari context_bahan
+            p = (
+                f"Berdasarkan riwayat pelajaran berikut:\n{context_bahan}\n\n"
+                f"Buatlah 1 soal kuis pilihan ganda level {st.session_state.q_level}. "
+                "Gunakan kata atau kalimat yang ADA dalam riwayat di atas. "
+                "Berikan 1 jawaban benar dan 3 jawaban salah yang masuk akal (distraktor). "
+                "Format JSON MURNI: {\"q\": \"soal\", \"r\": \"cara baca\", \"a\": \"jawaban benar\", \"o\": [\"salah1\", \"salah2\", \"salah3\"]}"
+            )
+            
             try:
+                res = model.generate_content(p)
                 raw = re.search(r'\{.*\}', res.text, re.DOTALL).group()
                 data = json.loads(raw)
                 opts = data['o'] + [data['a']]; random.shuffle(opts)
                 st.session_state.curr_q = {"q": data['q'], "r": data['r'], "a": data['a'], "opts": opts}
-            except: st.error("Gagal memuat. Klik Refresh."); st.button("Refresh"); st.stop()
+            except:
+                st.error("Gagal memproses materi chat. Klik Refresh.")
+                if st.button("Refresh"): st.rerun()
+                st.stop()
 
-    # Tampilan Soal
+    # --- 5. TAMPILAN SOAL ---
     q = st.session_state.curr_q
-    st.write(f"**Soal {st.session_state.q_step} / 5**")
+    st.write(f"**Soal {st.session_state.q_step} / 5** (Level: {st.session_state.q_level})")
     st.progress(st.session_state.q_step / 5)
     st.subheader(q['q'])
     st.caption(f"Baca: {q['r']}")
-    ans = st.radio("Pilih jawaban:", q['opts'], index=None)
+    
+    ans = st.radio("Pilih jawaban yang paling tepat menurut pelajaran sebelumnya:", q['opts'], index=None)
 
     if st.button("Kirim Jawaban", use_container_width=True):
-        if ans == q['a']:
-            st.success("Benar!"); st.session_state.q_score += 20
-        else: st.error(f"Salah! Jawaban: {q['a']}")
-        
-        if st.session_state.q_step < 5:
-            st.session_state.q_step += 1; del st.session_state.curr_q; st.rerun()
+        if not ans:
+            st.warning("Pilih salah satu jawaban!")
         else:
-            st.session_state.q_done = True; st.rerun()
+            if ans == q['a']:
+                st.success("✨ Benar! Kamu mengingat pelajaran dengan baik."); st.session_state.q_score += 20
+            else: 
+                st.error(f"❌ Kurang tepat. Jawaban yang benar adalah: {q['a']}")
+            
+            if st.session_state.q_step < 5:
+                st.session_state.q_step += 1; del st.session_state.curr_q; st.rerun()
+            else:
+                st.session_state.q_done = True; st.rerun()
+
 
 elif mode == "Konverter Angka":
     st.title("🔢 Konverter Angka Korea")
