@@ -259,8 +259,3 @@ elif mode == "Kuis Berjenjang":
             st.session_state.q_step += 1; del st.session_state.curr_q; st.rerun()
         else: st.session_state.q_done = True; st.rerun()
 
-elif mode == "Konverter Angka":
-    st.title("🔢 Konverter Angka")
-    num = st.number_input("Angka:", min_value=1)
-    if st.button("Konversi"):
-        st.write(model.generate_content(f"Angka {num} Sino & Native Korea.").text)
